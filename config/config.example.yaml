@@ -1,0 +1,24 @@
+# Copy to config/config.yaml for local overrides (config.yaml is gitignored).
+# Every field can also be set via environment variable, see .env.example.
+
+mode: mock                         # mock | real
+listen: 0.0.0.0:8080
+database: /data/state/ingest.db
+destination_root: /data/ingest
+mock_root: /data/mock-cards
+
+project:
+  default_name: TEST_EVENT
+
+cameras:
+  - CAM01
+  - CAM02
+  - CAM03
+  - DRONE
+  - AUDIO
+
+verification:
+  algorithm: sha256                # sha256 today; xxhash can be added later
+
+formatting:
+  enabled: false                   # formatting is not implemented in this phase

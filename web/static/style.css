@@ -1,0 +1,299 @@
+/*
+ * Brand tokens taken from tv2beat.com (Moy Santana's production company):
+ *   --bg / --panel      : their body/footer background (#1a191d, #252428)
+ *   --accent            : their button/CTA color (#00eebb)
+ *   sharp corners        : their buttons use border-radius: 0
+ * Headings use a heavy system-font weight as a stand-in for their licensed
+ * display face ("Poly Sans Bulky") - that font isn't ours to embed, so this
+ * approximates the same bulky/black look without a webfont dependency
+ * (this app must keep working with no internet access at a venue).
+ */
+:root {
+  --bg: #1a191d;
+  --panel: #211f24;
+  --panel-alt: #2c2a30;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.55);
+  --border: #3a3840;
+  --accent: #00eebb;
+  --accent-ink: #0d0f0e;
+  --amber: #ffb020;
+  --red: #ff4d4f;
+  font-size: 20px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Roboto, system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+button { font-family: inherit; }
+
+h1, h2, .card-title, .brand-name, .status-pill, .btn, .btn-camera {
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1rem 1.75rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.brand-logo {
+  height: 1.6rem;
+  width: auto;
+  display: block;
+}
+
+.brand-divider {
+  width: 1px;
+  height: 1.4rem;
+  background: var(--border);
+}
+
+.brand-name {
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.project {
+  flex: 1;
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+
+.health {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.dot {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: var(--muted);
+  display: inline-block;
+}
+.dot.ok { background: var(--accent); }
+.dot.down { background: var(--red); }
+
+main {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.active-area {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 1.25rem;
+}
+
+.idle-message {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--muted);
+  font-size: 1.6rem;
+  padding: 3rem 0;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.card-title {
+  font-size: 1.4rem;
+}
+
+.status-pill {
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  padding: 0.35rem 0.9rem;
+  background: transparent;
+  border: 2px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+}
+.status-pill.waiting { color: var(--text); border-color: rgba(255, 255, 255, 0.35); }
+.status-pill.copying,
+.status-pill.verifying { color: var(--amber); border-color: var(--amber); }
+.status-pill.verified,
+.status-pill.safe { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.status-pill.error { background: var(--red); color: #fff; border-color: var(--red); }
+.status-pill.ejected { color: var(--muted); border-color: var(--border); }
+
+.no-eject-banner {
+  display: none;
+  background: var(--red);
+  color: white;
+  font-weight: 800;
+  text-align: center;
+  padding: 0.6rem;
+  letter-spacing: 0.05em;
+}
+.card.show-no-eject .no-eject-banner { display: block; }
+
+.camera-picker { display: none; }
+.card.show-camera-picker .camera-picker { display: block; }
+
+.camera-picker p {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+
+.camera-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.btn-camera {
+  min-height: 4.5rem;
+  font-size: 1.25rem;
+  border: 2px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-camera:active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-camera:disabled { opacity: 0.5; }
+
+.progress-block { display: none; }
+.card.show-progress .progress-block { display: block; }
+
+.progress-bar {
+  height: 1.5rem;
+  background: var(--panel-alt);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.progress-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.progress-files {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.error-block {
+  display: none;
+  background: rgba(255, 77, 79, 0.12);
+  border: 1px solid var(--red);
+  color: #ffd4d5;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+.card.show-error .error-block { display: block; }
+
+.actions { display: none; }
+.card.show-actions .actions { display: flex; gap: 0.75rem; }
+
+.btn {
+  flex: 1;
+  min-height: 3.75rem;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-eject {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-eject:active { opacity: 0.8; }
+.btn-eject:disabled { opacity: 0.5; }
+
+.history h2 {
+  font-size: 1.2rem;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.history-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+thead th {
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+@media (max-width: 900px) {
+  :root { font-size: 17px; }
+  .active-area { grid-template-columns: 1fr; }
+}

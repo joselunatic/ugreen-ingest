@@ -1,0 +1,23 @@
+# Local runtime data - never commit card contents, ingested media, or the DB.
+/dev/cards/*
+!/dev/cards/.gitkeep
+/dev/data/
+/data/
+
+# Local config/secrets
+.env
+config/config.yaml
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Go
+/bin/
+*.test
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store

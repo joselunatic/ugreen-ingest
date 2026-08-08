@@ -1,0 +1,21 @@
+services:
+  ingest:
+    build: .
+    image: ugreen-ingest:latest
+    ports:
+      - "${INGEST_HOST_PORT:-8088}:8080"
+    environment:
+      INGEST_MODE: ${INGEST_MODE:-mock}
+      INGEST_LISTEN: 0.0.0.0:8080
+      INGEST_DATABASE: /data/state/ingest.db
+      INGEST_DESTINATION_ROOT: /data/ingest
+      INGEST_MOCK_ROOT: /data/mock-cards
+      INGEST_PROJECT_NAME: ${INGEST_PROJECT_NAME:-TEST_EVENT}
+    volumes:
+      - state:/data/state
+      - ingest_data:/data/ingest
+    restart: unless-stopped
+
+volumes:
+  state:
+  ingest_data:

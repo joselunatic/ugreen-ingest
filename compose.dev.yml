@@ -1,0 +1,8 @@
+services:
+  ingest:
+    ports:
+      - "${INGEST_HOST_PORT:-8088}:8080"
+    volumes:
+      - ./dev/cards:/data/mock-cards
+      - ./dev/data/state:/data/state
+      - ./dev/data/ingest:/data/ingest
