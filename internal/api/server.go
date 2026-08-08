@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/ugreen-ingest/ugreen-ingest/internal/config"
+	"github.com/ugreen-ingest/ugreen-ingest/internal/db"
+	"github.com/ugreen-ingest/ugreen-ingest/internal/diskspace"
 	"github.com/ugreen-ingest/ugreen-ingest/internal/ingest"
 )
 
@@ -24,12 +26,16 @@ func NewServer(mgr *ingest.Manager, webFS fs.FS) *Server {
 	s := &Server{mgr: mgr, mux: http.NewServeMux()}
 
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/v1/ingests", s.handleListIngests)
 	s.mux.HandleFunc("GET /api/v1/ingests/{id}", s.handleGetIngest)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/assign-camera", s.handleAssignCamera)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/eject", s.handleEject)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/format", s.handleFormat)
+	s.mux.HandleFunc("GET /api/v1/projects", s.handleListProjects)
+	s.mux.HandleFunc("POST /api/v1/projects", s.handleCreateProject)
+	s.mux.HandleFunc("POST /api/v1/projects/{id}/activate", s.handleActivateProject)
 	s.mux.HandleFunc("GET /api/v1/events", s.handleEvents)
 	s.mux.Handle("GET /", http.FileServer(http.FS(webFS)))
 
@@ -43,14 +49,85 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := s.mgr.Config()
-	cameras := append([]string{}, cfg.Cameras...)
+	activeEvent, err := s.mgr.ActiveEvent()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	cameras := append([]string{}, activeEvent.Cameras...)
 	cameras = append(cameras, config.ExtraCamera)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":         cfg.Mode,
-		"project_name": cfg.Project.DefaultName,
+		"mode":         s.mgr.Config().Mode,
+		"project_name": activeEvent.Name,
 		"cameras":      cameras,
 	})
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	activeEvent, err := s.mgr.ActiveEvent()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	destRoot := s.mgr.Config().DestinationRoot
+	usage, err := diskspace.Check(destRoot)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("check disk space: %w", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":         s.mgr.Config().Mode,
+		"active_event": activeEvent.Name,
+		"storage": map[string]any{
+			"path":         destRoot,
+			"bytes_total":  usage.BytesTotal,
+			"bytes_free":   usage.BytesFree,
+			"percent_used": usage.PercentUsed(),
+		},
+	})
+}
+
+func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	events, err := s.mgr.ListEvents()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string   `json:"name"`
+		Cameras []string `json:"cameras"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	ev, err := s.mgr.CreateEvent(body.Name, body.Cameras)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, ev)
+}
+
+func (s *Server) handleActivateProject(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ev, err := s.mgr.ActivateEvent(id)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ev)
 }
 
 func (s *Server) handleListIngests(w http.ResponseWriter, r *http.Request) {
@@ -190,11 +267,15 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func mapErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ingest.ErrNotFound):
+	case errors.Is(err, ingest.ErrNotFound), errors.Is(err, ingest.ErrEventNotFound):
 		writeError(w, http.StatusNotFound, err)
-	case errors.Is(err, ingest.ErrInvalidCamera):
+	case errors.Is(err, ingest.ErrInvalidCamera),
+		errors.Is(err, ingest.ErrInvalidEventName),
+		errors.Is(err, ingest.ErrInvalidCameraList):
 		writeError(w, http.StatusBadRequest, err)
-	case errors.Is(err, ingest.ErrInvalidState), errors.Is(err, ingest.ErrCollision):
+	case errors.Is(err, ingest.ErrInvalidState),
+		errors.Is(err, ingest.ErrCollision),
+		errors.Is(err, db.ErrDuplicateEvent):
 		writeError(w, http.StatusConflict, err)
 	default:
 		writeError(w, http.StatusInternalServerError, err)

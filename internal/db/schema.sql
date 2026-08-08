@@ -29,3 +29,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ingests_source_identifier
 
 CREATE INDEX IF NOT EXISTS idx_ingests_project_camera
     ON ingests (project_name, camera_id);
+
+-- Events (festivals/productions). Ingests link to an event by name, not by
+-- id: history stays a literal snapshot of what was active at detection
+-- time, so renaming/reconfiguring an event later can never rewrite the
+-- past. Exactly one event may be active at a time (enforced below).
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    cameras     TEXT NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_single_active
+    ON events (is_active)
+    WHERE is_active = 1;
+

@@ -1,0 +1,153 @@
+/* Admin-only additions on top of style.css's brand tokens. Deliberately
+ * denser and more "dashboard" than the tablet UI - this page is for the
+ * two people running the NAS, not the touch operator. */
+
+body { user-select: text; }
+
+.topbar .project { font-size: 0.95rem; }
+
+.btn-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+.btn-link:hover { text-decoration: underline; }
+
+.admin-main {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 1.25rem 1.5rem;
+}
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+}
+
+.storage-widget {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  font-size: 1rem;
+}
+
+.storage-bar {
+  flex: 1;
+  min-width: 200px;
+  height: 1rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+}
+
+.storage-bar-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.storage-bar-fill.warn { background: var(--red); }
+
+.event-form {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.event-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  flex: 1;
+  min-width: 220px;
+}
+
+.event-form input {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.6rem 0.75rem;
+  font-size: 1rem;
+}
+.event-form input:focus { outline: 2px solid var(--accent); }
+
+.btn {
+  padding: 0.65rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 800;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-accent:hover { opacity: 0.85; }
+.btn-accent:disabled { opacity: 0.5; cursor: default; }
+
+.btn-outline {
+  background: transparent;
+  border: 2px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+.btn-outline:disabled { opacity: 0.4; cursor: default; }
+
+.form-error {
+  color: var(--red);
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+.log-filters {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+.log-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.log-filters select {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.6rem;
+}
+
+.badge-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 800;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.6rem;
+  letter-spacing: 0.03em;
+}
+
+.mono { font-family: "Consolas", "Menlo", monospace; font-size: 0.85rem; }

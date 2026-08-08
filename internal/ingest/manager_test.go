@@ -36,6 +36,9 @@ func newTestManager(t *testing.T) (*Manager, *config.Config, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
+	if err := database.BootstrapEvent(cfg.Project.DefaultName, cfg.Cameras); err != nil {
+		t.Fatal(err)
+	}
 
 	hasher, err := verify.NewHasher(cfg.Verification.Algorithm)
 	if err != nil {
@@ -264,5 +267,86 @@ func TestEject_RequiresSafeToEject(t *testing.T) {
 
 	if _, err := mgr.Eject(id); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("expected ErrInvalidState ejecting a WAITING_CAMERA job, got %v", err)
+	}
+}
+
+func TestActivateEvent_NewDetectionsAttachToNewlyActiveEvent(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+
+	writeMockCard(t, mockRoot, "CARD_UNDER_BOOTSTRAP_EVENT")
+	mgr.scanOnce(context.Background())
+	first := findByIdentifier(t, mgr, "CARD_UNDER_BOOTSTRAP_EVENT")
+	firstIng, err := mgr.Get(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstIng.ProjectName != "TEST_EVENT" {
+		t.Fatalf("expected first card under bootstrap event TEST_EVENT, got %s", firstIng.ProjectName)
+	}
+
+	newEvent, err := mgr.CreateEvent("SECOND_FESTIVAL", []string{"CAM09"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ActivateEvent(newEvent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	writeMockCard(t, mockRoot, "CARD_UNDER_SECOND_EVENT")
+	mgr.scanOnce(context.Background())
+	second := findByIdentifier(t, mgr, "CARD_UNDER_SECOND_EVENT")
+	secondIng, err := mgr.Get(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondIng.ProjectName != "SECOND_FESTIVAL" {
+		t.Fatalf("expected second card under SECOND_FESTIVAL, got %s", secondIng.ProjectName)
+	}
+
+	// Switching the active event must never rewrite already-detected cards.
+	firstIng, err = mgr.Get(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstIng.ProjectName != "TEST_EVENT" {
+		t.Fatalf("activating a new event retroactively changed an existing ingest's project to %s", firstIng.ProjectName)
+	}
+}
+
+func TestAssignCamera_ValidatesAgainstCardsOwnEventNotWhicheverIsActiveNow(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+
+	// Card detected while TEST_EVENT (cameras CAM01, CAM02) is active.
+	writeMockCard(t, mockRoot, "CARD_ON_FIRST_EVENT")
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_ON_FIRST_EVENT")
+
+	// Switch active event to one with a completely different camera list.
+	other, err := mgr.CreateEvent("OTHER_FESTIVAL", []string{"CAM09"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ActivateEvent(other.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The card still belongs to TEST_EVENT, so its own cameras (CAM01/CAM02)
+	// must still be accepted...
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("expected CAM01 (valid for the card's own event) to be accepted, got %v", err)
+	}
+}
+
+func TestCreateEvent_RejectsInvalidNameAndEmptyCameraList(t *testing.T) {
+	mgr, _, _ := newTestManager(t)
+
+	if _, err := mgr.CreateEvent("bad/name", []string{"CAM01"}); !errors.Is(err, ErrInvalidEventName) {
+		t.Fatalf("expected ErrInvalidEventName, got %v", err)
+	}
+	if _, err := mgr.CreateEvent("VALID_NAME", nil); !errors.Is(err, ErrInvalidCameraList) {
+		t.Fatalf("expected ErrInvalidCameraList for empty camera list, got %v", err)
+	}
+	if _, err := mgr.CreateEvent("VALID_NAME", []string{"OTHER"}); !errors.Is(err, ErrInvalidCameraList) {
+		t.Fatalf("expected ErrInvalidCameraList when only the implicit OTHER camera is given, got %v", err)
 	}
 }

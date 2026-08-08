@@ -33,12 +33,18 @@ func newTestServer(t *testing.T) (*Server, *ingest.Manager, string) {
 	cfg.MockRoot = mockRoot
 	cfg.DestinationRoot = filepath.Join(dir, "ingest")
 	cfg.Cameras = []string{"CAM01"}
+	if err := os.MkdirAll(cfg.DestinationRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	database, err := db.Open(filepath.Join(dir, "state", "ingest.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
+	if err := database.BootstrapEvent(cfg.Project.DefaultName, cfg.Cameras); err != nil {
+		t.Fatal(err)
+	}
 
 	hasher, err := verify.NewHasher(cfg.Verification.Algorithm)
 	if err != nil {
@@ -179,4 +185,88 @@ func TestFormat_AlwaysDisabled(t *testing.T) {
 
 func itoa(id int64) string {
 	return strconv.FormatInt(id, 10)
+}
+
+func TestStatus_ReturnsActiveEventAndStorage(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	rec := doJSON(srv, "GET", "/api/v1/status", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ActiveEvent string `json:"active_event"`
+		Storage     struct {
+			BytesTotal  uint64  `json:"bytes_total"`
+			PercentUsed float64 `json:"percent_used"`
+		} `json:"storage"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ActiveEvent != "TEST_EVENT" {
+		t.Errorf("expected active_event TEST_EVENT, got %q", body.ActiveEvent)
+	}
+	if body.Storage.BytesTotal == 0 {
+		t.Error("expected a nonzero bytes_total for the destination filesystem")
+	}
+}
+
+func TestListProjects_ReturnsBootstrapEvent(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	rec := doJSON(srv, "GET", "/api/v1/projects", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var events []struct {
+		Name     string `json:"name"`
+		IsActive bool   `json:"is_active"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Name != "TEST_EVENT" || !events[0].IsActive {
+		t.Fatalf("expected exactly one active bootstrap event, got %+v", events)
+	}
+}
+
+func TestCreateProject_InvalidNameReturns400(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	rec := doJSON(srv, "POST", "/api/v1/projects", map[string]any{"name": "bad/name", "cameras": []string{"CAM01"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateAndActivateProject(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+
+	createRec := doJSON(srv, "POST", "/api/v1/projects", map[string]any{
+		"name":    "NEW_FESTIVAL",
+		"cameras": []string{"CAM01", "DRONE"},
+	})
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	activateRec := doJSON(srv, "POST", "/api/v1/projects/"+itoa(created.ID)+"/activate", nil)
+	if activateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", activateRec.Code, activateRec.Body.String())
+	}
+
+	statusRec := doJSON(srv, "GET", "/api/v1/status", nil)
+	var status struct {
+		ActiveEvent string `json:"active_event"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.ActiveEvent != "NEW_FESTIVAL" {
+		t.Fatalf("expected NEW_FESTIVAL to be active, got %q", status.ActiveEvent)
+	}
 }

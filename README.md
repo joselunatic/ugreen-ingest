@@ -132,6 +132,11 @@ Covers, per the runbook's acceptance criteria (section 18.1):
 - unknown camera, double camera-assignment, destination collision, and
   ejecting before `SAFE_TO_EJECT` are all rejected
 - the HTTP API's status codes for the above (`internal/api`)
+- events: only one active at a time, switching active events never
+  rewrites already-detected ingests, camera validation uses the event a
+  card actually belongs to (not whichever is active *now*), duplicate
+  event names and invalid names/camera lists are rejected
+  (`internal/db/events_test.go`, `internal/ingest/manager_test.go`)
 
 ## State machine
 
@@ -153,22 +158,61 @@ copy/verify/eject path is stable on real hardware.
 See `config/config.example.yaml` for the full set of keys
 (mode/listen/database/destination_root/mock_root/project/cameras/
 verification/formatting) and `.env.example` for the equivalent environment
-variables. Cameras shown in the UI come from `cameras:` plus a built-in
-"OTHER" option.
+variables. `project.default_name` and `cameras` are now only the **seed for
+the first event** on a brand-new database (see "Events" below) - after that,
+manage the active event's name and camera list from `/admin.html` instead of
+editing config and restarting.
+
+## Events (proyecto/evento) and the admin panel
+
+One event is active at a time; every newly detected card attaches to it.
+Switching the active event never touches ingests already recorded under a
+previous one (they keep the event name and camera list they had at
+detection time, forever - see `internal/db/events.go`).
+
+Manage events at **http://localhost:8088/admin.html** - deliberately a
+separate page, not linked from the tablet UI, so the operator screen stays
+exactly as minimal as the runbook asks for (section 4/22: no admin menus on
+the tablet). The admin page has no login, same as the tablet: this is a
+trusted-LAN tool for two people, not a multi-tenant system.
+
+The admin panel covers the three things asked for when starting phase 2:
+
+- **Create/select the event** - a name (becomes the top-level folder under
+  `destination_root`) and its camera list (becomes the buttons the tablet
+  offers). Both are validated (path-safe characters only, since both become
+  literal directory names) and take effect immediately - the tablet UI
+  picks up the new camera list within 5 seconds via `/api/v1/config`,
+  no restart needed.
+- **Operation log with NAS destinations** - every ingest ever recorded,
+  filterable by event, showing the full `destination_path`, not just the
+  card number the tablet shows.
+- **Storage** - free/total space for `destination_root`, also surfaced as a
+  small "Storage: OK/BAJO" indicator on the tablet itself (closing the gap
+  with the runbook's section 11.1 mockup, which we hadn't implemented until
+  now). **This checks `destination_root` as a local path today**; once the
+  NAS is available this may need to change (e.g. if the real mount point
+  isn't the same filesystem as where the app itself runs) - flagged as a
+  to-revisit-with-hardware item, not solved yet.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | liveness check |
-| GET | `/api/v1/config` | cameras + project name, for the UI |
+| GET | `/api/v1/status` | active event name + storage free/total/percent |
+| GET | `/api/v1/config` | active event's cameras + name, for the tablet |
 | GET | `/api/v1/ingests` | full history, newest first |
 | GET | `/api/v1/ingests/{id}` | one job |
 | POST | `/api/v1/ingests/{id}/assign-camera` | `{"camera":"CAM01"}`; starts copy+verify |
 | POST | `/api/v1/ingests/{id}/eject` | only from `SAFE_TO_EJECT` |
 | POST | `/api/v1/ingests/{id}/format` | always `501`, not implemented yet |
-| GET | `/api/v1/events` | SSE: `ingest_updated` and `progress` events |
+| GET | `/api/v1/projects` | list events with per-event stats |
+| POST | `/api/v1/projects` | `{"name":"...","cameras":["CAM01",...]}`; create an event |
+| POST | `/api/v1/projects/{id}/activate` | switch the active event |
+| GET | `/api/v1/events` | SSE: `ingest_updated` and `progress` events (yes, `events` is the SSE stream and `projects` is the event/festival resource - the runbook fixed the SSE path name in section 16 before "event" as in "festival" existed as a concept here) |
 | GET | `/` | the tablet UI |
+| GET | `/admin.html` | the admin panel |
 
 ## Repository layout
 
@@ -176,13 +220,14 @@ variables. Cameras shown in the UI come from `cameras:` plus a built-in
 cmd/ingest/          entrypoint: wires config, db, device provider, manager, API
 internal/config/     YAML + env config loading
 internal/model/      shared types (Ingest, Status, Progress)
-internal/db/         SQLite persistence (modernc.org/sqlite, pure Go, no CGO)
+internal/db/         SQLite persistence (modernc.org/sqlite, pure Go, no CGO); ingests + events tables
 internal/device/     Provider interface; mock (directories) + real (stub) implementations
 internal/copyengine/ recursive tree copy with progress, source is read-only
 internal/verify/     re-read + hash comparison, pluggable Hasher
-internal/ingest/     the state machine (Manager) and its pub/sub event bus
-internal/api/        HTTP handlers, SSE, serves the embedded web UI
-web/static/          tablet UI (vanilla HTML/CSS/JS, no framework)
+internal/ingest/     the state machine (Manager), event/project management, pub/sub event bus
+internal/diskspace/  free/total space for a path (syscall.Statfs, Linux-only)
+internal/api/        HTTP handlers, SSE, serves the embedded web UI + admin panel
+web/static/          tablet UI (vanilla HTML/CSS/JS, no framework) + admin.html/css/js
 dev/cards/           mock card fixtures (gitignored except .gitkeep)
 scripts/             create-mock-card.sh
 docs/RUNBOOK.md       the full spec this was built against

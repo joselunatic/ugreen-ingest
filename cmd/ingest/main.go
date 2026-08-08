@@ -38,6 +38,13 @@ func main() {
 	}
 	defer database.Close()
 
+	// Seeds the first event from config on a brand-new database only; once
+	// any event exists (created via the admin panel or a prior run) this is
+	// a no-op. See internal/db/events.go.
+	if err := database.BootstrapEvent(cfg.Project.DefaultName, cfg.Cameras); err != nil {
+		log.Fatalf("bootstrap event: %v", err)
+	}
+
 	hasher, err := verify.NewHasher(cfg.Verification.Algorithm)
 	if err != nil {
 		log.Fatalf("verification config: %v", err)
@@ -81,7 +88,11 @@ func main() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("ugreen-ingest listening on %s (mode=%s, project=%s)", cfg.Listen, cfg.Mode, cfg.Project.DefaultName)
+	activeEvent, err := mgr.ActiveEvent()
+	if err != nil {
+		log.Fatalf("read active event: %v", err)
+	}
+	log.Printf("ugreen-ingest listening on %s (mode=%s, active event=%s)", cfg.Listen, cfg.Mode, activeEvent.Name)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}

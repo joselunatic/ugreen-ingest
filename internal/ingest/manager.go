@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,11 +26,22 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("ingest not found")
-	ErrInvalidState   = errors.New("ingest is not in the expected state")
-	ErrInvalidCamera  = errors.New("invalid camera")
-	ErrCollision      = errors.New("destination already exists")
-	ErrFormatDisabled = errors.New("formatting is not available in this phase")
+	ErrNotFound          = errors.New("ingest not found")
+	ErrInvalidState      = errors.New("ingest is not in the expected state")
+	ErrInvalidCamera     = errors.New("invalid camera")
+	ErrCollision         = errors.New("destination already exists")
+	ErrFormatDisabled    = errors.New("formatting is not available in this phase")
+	ErrEventNotFound     = errors.New("event not found")
+	ErrInvalidEventName  = errors.New("invalid event name")
+	ErrInvalidCameraList = errors.New("invalid camera list")
+)
+
+// eventNamePattern / cameraCodePattern restrict the characters allowed in
+// event names and camera codes, since both become literal path components
+// under destination_root.
+var (
+	eventNamePattern  = regexp.MustCompile(`^[A-Za-z0-9 _-]{1,100}$`)
+	cameraCodePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 )
 
 const scanInterval = 2 * time.Second
@@ -56,6 +68,71 @@ func (m *Manager) Subscribe() (int, <-chan Event) { return m.broker.subscribe() 
 func (m *Manager) Unsubscribe(id int)             { m.broker.unsubscribe(id) }
 func (m *Manager) Config() *config.Config         { return m.cfg }
 
+// ActiveEvent returns the event new detections currently attach to.
+func (m *Manager) ActiveEvent() (*model.Event, error) {
+	return m.db.GetActiveEvent()
+}
+
+// ListEvents returns every event, newest first, with per-event stats.
+func (m *Manager) ListEvents() ([]*model.EventSummary, error) {
+	return m.db.ListEventsWithStats()
+}
+
+// CreateEvent validates and stores a new event. It does not activate it -
+// call ActivateEvent separately once you're ready to switch to it.
+func (m *Manager) CreateEvent(name string, cameras []string) (*model.Event, error) {
+	name = strings.TrimSpace(name)
+	if !eventNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("%w: must be 1-100 characters, letters/numbers/spaces/-/_ only", ErrInvalidEventName)
+	}
+
+	cleaned, err := cleanCameraList(cameras)
+	if err != nil {
+		return nil, err
+	}
+
+	ev, err := m.db.CreateEvent(name, cleaned)
+	if err != nil {
+		if errors.Is(err, db.ErrDuplicateEvent) {
+			return nil, fmt.Errorf("%w: %q", db.ErrDuplicateEvent, name)
+		}
+		return nil, err
+	}
+	return ev, nil
+}
+
+// ActivateEvent switches which event newly detected cards attach to. It
+// never touches ingests already recorded under any event.
+func (m *Manager) ActivateEvent(id int64) (*model.Event, error) {
+	if err := m.db.ActivateEvent(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEventNotFound
+		}
+		return nil, err
+	}
+	return m.db.GetEventByID(id)
+}
+
+func cleanCameraList(cameras []string) ([]string, error) {
+	seen := make(map[string]bool)
+	var cleaned []string
+	for _, c := range cameras {
+		c = strings.ToUpper(strings.TrimSpace(c))
+		if c == "" || c == config.ExtraCamera || seen[c] {
+			continue
+		}
+		if !cameraCodePattern.MatchString(c) {
+			return nil, fmt.Errorf("%w: %q must be 1-40 characters, letters/numbers/-/_ only", ErrInvalidCameraList, c)
+		}
+		seen[c] = true
+		cleaned = append(cleaned, c)
+	}
+	if len(cleaned) == 0 {
+		return nil, fmt.Errorf("%w: at least one camera is required", ErrInvalidCameraList)
+	}
+	return cleaned, nil
+}
+
 // Run polls the configured device provider until ctx is cancelled, turning
 // every newly seen source into a WAITING_CAMERA ingest job.
 func (m *Manager) Run(ctx context.Context) {
@@ -79,6 +156,15 @@ func (m *Manager) scanOnce(ctx context.Context) {
 		log.Printf("ingest: device scan error: %v", err)
 		return
 	}
+	if len(sources) == 0 {
+		return
+	}
+
+	activeEvent, err := m.db.GetActiveEvent()
+	if err != nil {
+		log.Printf("ingest: no active event, cannot register detected cards: %v", err)
+		return
+	}
 
 	for _, src := range sources {
 		known, err := m.db.SourceKnown(src.Identifier)
@@ -90,7 +176,7 @@ func (m *Manager) scanOnce(ctx context.Context) {
 			continue
 		}
 
-		ing, err := m.db.CreateDetected(m.cfg.Project.DefaultName, src.Identifier, src.Path, src.FileCount, src.SizeBytes, time.Now())
+		ing, err := m.db.CreateDetected(activeEvent.Name, src.Identifier, src.Path, src.FileCount, src.SizeBytes, time.Now())
 		if err != nil {
 			log.Printf("ingest: create detected job for %s: %v", src.Identifier, err)
 			continue
@@ -125,9 +211,6 @@ func (m *Manager) Get(id int64) (*model.Ingest, error) {
 // card number for that camera, and kicks off copy+verify in the background.
 func (m *Manager) AssignCamera(id int64, camera string) (*model.Ingest, error) {
 	camera = strings.ToUpper(strings.TrimSpace(camera))
-	if !m.allowedCamera(camera) {
-		return nil, fmt.Errorf("%w: %q", ErrInvalidCamera, camera)
-	}
 
 	ing, err := m.Get(id)
 	if err != nil {
@@ -135,6 +218,16 @@ func (m *Manager) AssignCamera(id int64, camera string) (*model.Ingest, error) {
 	}
 	if ing.Status != model.StatusWaitingCamera {
 		return nil, fmt.Errorf("%w: current status is %s", ErrInvalidState, ing.Status)
+	}
+
+	// Validate against the event the card was detected under, not
+	// necessarily whichever event is active right now.
+	ev, err := m.db.GetEventByName(ing.ProjectName)
+	if err != nil {
+		return nil, fmt.Errorf("look up event %q: %w", ing.ProjectName, err)
+	}
+	if !allowedCamera(camera, ev.Cameras) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCamera, camera)
 	}
 
 	cardNumber, err := m.db.NextCardNumber(ing.ProjectName, camera)
@@ -162,11 +255,11 @@ func (m *Manager) AssignCamera(id int64, camera string) (*model.Ingest, error) {
 	return ing, nil
 }
 
-func (m *Manager) allowedCamera(camera string) bool {
+func allowedCamera(camera string, eventCameras []string) bool {
 	if camera == config.ExtraCamera {
 		return true
 	}
-	for _, c := range m.cfg.Cameras {
+	for _, c := range eventCameras {
 		if strings.EqualFold(c, camera) {
 			return true
 		}

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tv2beat · Media Ingest · Admin</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-logo" viewBox="0 0 360 69.75975" xmlns="http://www.w3.org/2000/svg" aria-label="tv2beat" role="img">
+      <path d="M260.37543,41.82548a25.829,25.829,0,0,0-3.506-13.8842,21.87027,21.87027,0,0,0-9.24071-8.38827,30.50989,30.50989,0,0,0-26.58554.61549,22.46372,22.46372,0,0,0-9.09818,9.38324,29.4866,29.4866,0,0,0-3.12743,13.79072A29.4866,29.4866,0,0,0,211.945,57.13318a22.46372,22.46372,0,0,0,9.09818,9.38324,30.51,30.51,0,0,0,26.58554.61549,22.10561,22.10561,0,0,0,11.65269-13.93233H243.90987a9.77775,9.77775,0,0,1-1.44756,2.06907,9.00273,9.00273,0,0,1-6.91757,2.859q-9.38232,0-11.37318-10.99416h36.12752C260.34582,46.39123,260.37543,42.35119,260.37543,41.82548ZM235.54474,27.04026a9.0027,9.0027,0,0,1,6.91757,2.859q2.65447,2.86064,3.034,8.13513H224.17156Q226.16242,27.043,235.54474,27.04026Z" transform="translate(0 -0.12013)" fill="#fff"/>
+      <path d="M343.82552,30.4523V51.304c0,4.73883.18974,4.92857,4.54955,4.92857H360V68.36475H343.44651c-10.04686,0-14.78615-3.31718-14.78615-15.35491V30.4523h-8.58281V18.32017h8.58281V6.18519h15.16516v12.135H360V30.4523Z" transform="translate(0 -0.12013)" fill="#fff"/>
+      <path d="M76.88464,18.31807,67.88041,50.54393a30.00361,30.00361,0,0,0-.66362,6.72876c0,.94869-.18973,2.08526-1.51651,2.08526s-1.51652-1.13657-1.51652-2.08526a30.00361,30.00361,0,0,0-.66362-6.72876L54.51591,18.31807l-30.76811.00185V6.185H8.58264v12.1349H0V30.45205H8.58264V53.0096c0,12.03772,4.73929,15.3549,14.78615,15.3549H39.92228V56.23237H28.29735c-4.35981,0-4.54955-.18974-4.54955-4.92857V30.45205H42.44765l12.637,37.91059H76.31589L92.99757,18.31807Z" transform="translate(0 -0.12013)" fill="#fff"/>
+      <path d="M165.54033,19.83438a9.36341,9.36341,0,0,1-1.04263,4.17053c-.758,1.61139-1.9904,3.31718-.758,3.88639,1.137.56829,1.80066-.759,2.17967-1.42257,3.1279-5.781,8.15134-9.66739,15.73392-9.66739,13.74351,0,21.8,11.75266,21.8,26.53927,0,14.78568-8.05647,26.53834-21.8,26.53834-7.48772,0-12.606-3.79106-15.73392-9.76179-.28414-.56922-.758-1.61139-1.70579-1.32725-1.42211.47389-.56875,2.08527.18928,3.69666a8.02966,8.02966,0,0,1,1.1375,4.0752v1.80112H150.37517V.12013h15.16516Zm22.74774,23.50623c0-7.2989-3.412-13.64911-10.99462-13.64911-7.20357,0-11.75312,6.35021-11.75312,13.64911,0,7.298,4.54955,13.64818,11.75312,13.64818C184.876,56.98879,188.28807,50.63858,188.28807,43.34061Z" transform="translate(0 -0.12013)" fill="#fff"/>
+      <path d="M292.46925,16.80134c-10.74982,0-22.54458,4.47042-24.96027,16.684h15.13485c1.06369-3.052,3.56152-5.30988,9.44641-5.30988,6.919,0,8.43547,3.60132,8.53034,6.44461.09487,4.26587-6.2558,3.69665-15.16516,4.26587-10.80535.66269-19.71471,4.83323-19.71471,16.11293,0,8.34107,7.29844,14.88009,17.43971,14.88009,8.34107,0,13.93325-4.45468,17.06115-10.61515.379-.66362.758-1.80113,1.9904-1.23191,1.04263.47388.18927,1.98993-.56875,3.60132a9.0621,9.0621,0,0,0-1.04264,4.17053v2.55915h15.16517V40.68613C315.78575,20.5924,304.31724,16.80134,292.46925,16.80134ZM288.96234,59.2638c-4.07567.66362-8.05647-1.13751-8.05647-5.308,0-4.26494,3.1279-5.87633,6.63482-6.2558,7.1087-.85244,10.61561-1.04218,13.07989-3.60133C300.52571,54.42964,293.51188,58.50577,288.96234,59.2638Z" transform="translate(0 -0.12013)" fill="#fff"/>
+      <path d="M111.178,57.55961c-.85336.47388-1.9904.94776-2.55915,0s.379-1.61139,1.23191-2.08527c11.18436-6.06607,31.94171-14.02766,31.94171-32.69974,0-12.70134-9.0991-22.65287-25.78078-22.65287-8.73559,0-15.3306,3.18112-19.66566,8.16521l9.4404,13.10026c1.36472-5.55285,5.451-7.61729,10.22526-7.61729,6.2558,0,10.61561,2.74889,10.61561,9.00469,0,12.25569-15.19293,18.14868-35.14689,29.69956V68.3645h48.15969V55.47434H120.9402C116.10651,55.47434,113.8315,56.04263,111.178,57.55961Z" transform="translate(0 -0.12013)" fill="#fff"/>
+    </svg>
+    <span class="brand-divider"></span>
+    <span class="brand-name">ADMIN</span>
+  </div>
+  <div class="project">Gesti&oacute;n de eventos e historial &mdash; no visible en la tablet del operador</div>
+  <a class="btn-link" href="/">&larr; Volver a la tablet</a>
+</header>
+
+<main class="admin-main">
+
+  <section class="panel">
+    <h2>Almacenamiento</h2>
+    <div id="storage-widget" class="storage-widget">Cargando&hellip;</div>
+  </section>
+
+  <section class="panel">
+    <h2>Nuevo evento</h2>
+    <form id="new-event-form" class="event-form">
+      <label>
+        Nombre del evento
+        <input type="text" id="event-name" placeholder="p.ej. VOLUMENS_2026" required>
+      </label>
+      <label>
+        C&aacute;maras (separadas por coma)
+        <input type="text" id="event-cameras" placeholder="CAM01, CAM02, CAM03, DRONE, AUDIO" required>
+      </label>
+      <button type="submit" class="btn btn-accent">Crear evento</button>
+    </form>
+    <p id="event-form-error" class="form-error"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Eventos</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>C&aacute;maras</th>
+            <th>Tarjetas</th>
+            <th>Total copiado</th>
+            <th>Creado</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Historial completo</h2>
+    <div class="log-filters">
+      <label>
+        Evento
+        <select id="log-filter-event"><option value="">Todos</option></select>
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Evento</th>
+            <th>C&aacute;mara</th>
+            <th>Tarjeta</th>
+            <th>Estado</th>
+            <th>Verificaci&oacute;n</th>
+            <th>Archivos</th>
+            <th>Tama&ntilde;o</th>
+            <th>Destino en el NAS</th>
+            <th>Detectada</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script src="/admin.js"></script>
+</body>
+</html>

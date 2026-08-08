@@ -40,6 +40,10 @@
   const projectNameEl = document.getElementById("project-name");
   const healthDot = document.getElementById("health-dot");
   const healthLabel = document.getElementById("health-label");
+  const storageDot = document.getElementById("storage-dot");
+  const storageLabel = document.getElementById("storage-label");
+
+  const STORAGE_WARN_PERCENT = 90;
 
   function cameraLabel(code) {
     const m = /^CAM0*(\d+)$/.exec(code);
@@ -271,12 +275,29 @@
     }
   }
 
+  async function pollStatus() {
+    try {
+      const res = await fetch("/api/v1/status");
+      const status = await res.json();
+      const percent = status.storage ? status.storage.percent_used : 0;
+      const low = percent >= STORAGE_WARN_PERCENT;
+      storageDot.className = "dot " + (low ? "down" : "ok");
+      storageLabel.textContent = "Storage: " + (low ? "BAJO" : "OK");
+      projectNameEl.textContent = "Proyecto: " + (status.active_event || "");
+    } catch {
+      storageDot.className = "dot down";
+      storageLabel.textContent = "Storage: SIN DATOS";
+    }
+  }
+
   async function init() {
     await loadConfig();
     await loadIngests();
     connectEvents();
     pollHealth();
+    pollStatus();
     setInterval(pollHealth, 5000);
+    setInterval(pollStatus, 5000);
   }
 
   init();
