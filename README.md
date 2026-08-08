@@ -137,13 +137,22 @@ Covers, per the runbook's acceptance criteria (section 18.1):
   card actually belongs to (not whichever is active *now*), duplicate
   event names and invalid names/camera lists are rejected
   (`internal/db/events_test.go`, `internal/ingest/manager_test.go`)
+- cancellation is deterministic at the engine level (`copyengine`/`verify`
+  tests cancel via a progress callback / pre-cancelled context, not by
+  racing wall-clock time); at the manager level, cancelling mid-copy marks
+  `CANCELLED` and removes the partial destination; retry from `ERROR`/
+  `CANCELLED` keeps the same camera/card number and redrives successfully;
+  `ResumeInterrupted` redrives a job left `COPYING`/`VERIFYING` by a
+  simulated ungraceful restart
 
 ## State machine
 
 ```
 DETECTED -> WAITING_CAMERA -> COPYING -> VERIFYING -> VERIFIED -> SAFE_TO_EJECT -> EJECTED
                                   \            \
-                                   -> ERROR <---
+                                   -> ERROR/CANCELLED <-'
+                                          \
+                                           -> (Retry) -> COPYING
 ```
 
 `SAFE_TO_EJECT` is only ever set immediately after a `VERIFIED` transition
@@ -152,6 +161,41 @@ no code path that can reach it any other way. Formatting
 (`POST /api/v1/ingests/:id/format`) is wired up but always returns
 `501 Not Implemented`; per the runbook, it's out of scope until the safe
 copy/verify/eject path is stable on real hardware.
+
+`ERROR` and `CANCELLED` are both retryable (see below) but mean different
+things: `ERROR` is an unexpected failure (I/O error, verification
+mismatch), `CANCELLED` is the operator deliberately stopping an in-progress
+copy or verification.
+
+## Cancellation, retry, and resume (phase 2)
+
+- **Cancel** (`POST /api/v1/ingests/{id}/cancel`, only valid from `COPYING`
+  or `VERIFYING`) stops the running copy/verify via a per-job cancellable
+  context. If it was `COPYING`, the destination is by definition incomplete
+  and is removed - it's the app's own half-written folder, not the source
+  card, so deleting it isn't the "never delete card data" rule being
+  broken. If it was `VERIFYING`, the copy had already finished
+  successfully, so the files are left in place; `CANCELLED` with an
+  explicit message makes clear they were never double-checked, so the UI
+  never implies `SAFE_TO_EJECT` for them.
+- **Retry** (`POST /api/v1/ingests/{id}/retry`, only valid from `ERROR` or
+  `CANCELLED`) redoes the full copy+verify using the *same* camera/card
+  number/destination the job already had - it does not go through camera
+  assignment again, so it can't allocate a second card number for the same
+  physical card. This is safe to repeat because the copy engine always
+  overwrites the destination fully rather than trying to append/resume a
+  specific file.
+- **Resume after an ungraceful restart**: on startup, `Manager.ResumeInterrupted`
+  finds any job still `COPYING`/`VERIFYING` from a previous process that
+  died mid-flight (crash, `docker kill`, power loss) and redrives it the
+  same way Retry does - full fresh copy+verify, not a byte-range resume.
+  Verified by hard-killing the container mid-copy of a real ~300MB mock
+  card and confirming it finished correctly after restart (see git history
+  for the manual test); also covered by
+  `TestResumeInterrupted_RedrivesStuckJobs`.
+- The tablet shows **CANCELAR COPIA** during `COPYING`/`VERIFYING` (behind
+  a confirm dialog - it discards a partial copy) and **REINTENTAR** on
+  `ERROR`/`CANCELLED`.
 
 ## Configuration
 
@@ -206,6 +250,8 @@ The admin panel covers the three things asked for when starting phase 2:
 | GET | `/api/v1/ingests/{id}` | one job |
 | POST | `/api/v1/ingests/{id}/assign-camera` | `{"camera":"CAM01"}`; starts copy+verify |
 | POST | `/api/v1/ingests/{id}/eject` | only from `SAFE_TO_EJECT` |
+| POST | `/api/v1/ingests/{id}/cancel` | only from `COPYING`/`VERIFYING` |
+| POST | `/api/v1/ingests/{id}/retry` | only from `ERROR`/`CANCELLED`; redoes copy+verify |
 | POST | `/api/v1/ingests/{id}/format` | always `501`, not implemented yet |
 | GET | `/api/v1/projects` | list events with per-event stats |
 | POST | `/api/v1/projects` | `{"name":"...","cameras":["CAM01",...]}`; create an event |
@@ -229,7 +275,7 @@ internal/diskspace/  free/total space for a path (syscall.Statfs, Linux-only)
 internal/api/        HTTP handlers, SSE, serves the embedded web UI + admin panel
 web/static/          tablet UI (vanilla HTML/CSS/JS, no framework) + admin.html/css/js
 dev/cards/           mock card fixtures (gitignored except .gitkeep)
-scripts/             create-mock-card.sh
+scripts/             create-mock-card.sh (small, instant) + create-big-test-card.sh (~300MB, for manually testing cancel/resume - a real copy needs to take visible time to cancel mid-flight)
 docs/RUNBOOK.md       the full spec this was built against
 ```
 
@@ -263,3 +309,16 @@ per runbook section 22:
   throttle window, so the progress bar can jump straight to 100% - this is
   a fixture-size artifact, not a bug (progress reporting is unit-tested in
   `internal/copyengine` and used as-is once real card-sized data is copied).
+- Retry/resume always redo the *entire* copy+verify, never a byte-range
+  resume of a partial file - simpler and always correct (the copy engine
+  overwrites destination files fully), but slower than a true incremental
+  resume would be for a huge card interrupted near the end. Acceptable
+  trade-off for now; revisit if real card sizes make this painful.
+- Detection can record a stale `file_count`/`bytes_total` if a card is
+  scanned while it's *still being written to* at the exact moment of
+  detection (observed once with a synthetic 150-file fixture written
+  slowly by `dd` in a loop - not a scenario a real, already-finished SD
+  card write triggers, but noted here since it's a real edge case). The
+  actual copy itself is unaffected: it re-scans the source tree at copy
+  time, so nothing is silently missed - only the number initially shown
+  on the "TARJETA DETECTADA" screen could be off until the copy starts.

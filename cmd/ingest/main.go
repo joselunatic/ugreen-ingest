@@ -69,6 +69,13 @@ func main() {
 
 	mgr := ingest.NewManager(cfg, database, provider, hasher)
 
+	// If the process was killed/restarted mid-copy, redrive those jobs
+	// from scratch now rather than leaving them stuck showing COPYING or
+	// VERIFYING forever with no goroutine actually driving them.
+	if err := mgr.ResumeInterrupted(); err != nil {
+		log.Fatalf("resume interrupted jobs: %v", err)
+	}
+
 	staticFS, err := fs.Sub(web.StaticFS, "static")
 	if err != nil {
 		log.Fatalf("web assets: %v", err)

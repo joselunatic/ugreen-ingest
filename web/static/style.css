@@ -153,6 +153,7 @@ main {
 .status-pill.verified,
 .status-pill.safe { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .status-pill.error { background: var(--red); color: #fff; border-color: var(--red); }
+.status-pill.cancelled { color: var(--amber); border-color: var(--amber); border-style: dashed; }
 .status-pill.ejected { color: var(--muted); border-color: var(--border); }
 
 .no-eject-banner {
@@ -238,8 +239,21 @@ main {
 }
 .card.show-error .error-block { display: block; }
 
-.actions { display: none; }
-.card.show-actions .actions { display: flex; gap: 0.75rem; }
+.cancelled-block {
+  display: none;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid var(--amber);
+  color: #ffe1b3;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  word-break: break-word;
+}
+.card.show-cancelled-msg .cancelled-block { display: block; }
+
+.action-row { display: none; gap: 0.75rem; }
+.card.show-actions .actions-eject { display: flex; }
+.card.show-cancel-action .actions-cancel { display: flex; }
+.card.show-retry-action .actions-retry { display: flex; }
 
 .btn {
   flex: 1;
@@ -256,6 +270,22 @@ main {
 }
 .btn-eject:active { opacity: 0.8; }
 .btn-eject:disabled { opacity: 0.5; }
+
+.btn-cancel {
+  background: transparent;
+  border: 2px solid var(--red);
+  color: var(--red);
+}
+.btn-cancel:active { background: var(--red); color: #fff; }
+.btn-cancel:disabled { opacity: 0.5; }
+
+.btn-retry {
+  background: transparent;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+}
+.btn-retry:active { background: var(--accent); color: var(--accent-ink); }
+.btn-retry:disabled { opacity: 0.5; }
 
 .history h2 {
   font-size: 1.2rem;

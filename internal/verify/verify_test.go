@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,6 +121,22 @@ func TestVerify_SameSizeContentTamper(t *testing.T) {
 	}
 	if result.Mismatches[0].Reason != ReasonHashMismatch {
 		t.Errorf("expected hash_mismatch, got %s", result.Mismatches[0].Reason)
+	}
+}
+
+// TestVerify_RespectsCancellation uses a pre-cancelled context: ctx.Err()
+// is checked before any file is hashed, so this deterministically confirms
+// Verify never mistakes a cancelled run for a completed one.
+func TestVerify_RespectsCancellation(t *testing.T) {
+	src, dst := setupCopiedCard(t)
+	hasher, _ := NewHasher("sha256")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Verify(ctx, src, dst, hasher)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 

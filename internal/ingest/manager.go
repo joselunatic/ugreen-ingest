@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ugreen-ingest/ugreen-ingest/internal/config"
@@ -52,6 +53,9 @@ type Manager struct {
 	provider device.Provider
 	hasher   verify.Hasher
 	broker   *broker
+
+	mu      sync.Mutex
+	cancels map[int64]context.CancelFunc
 }
 
 func NewManager(cfg *config.Config, database *db.DB, provider device.Provider, hasher verify.Hasher) *Manager {
@@ -61,6 +65,7 @@ func NewManager(cfg *config.Config, database *db.DB, provider device.Provider, h
 		provider: provider,
 		hasher:   hasher,
 		broker:   newBroker(),
+		cancels:  make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -250,9 +255,29 @@ func (m *Manager) AssignCamera(id int64, camera string) (*model.Ingest, error) {
 	}
 	m.broker.publish(Event{Type: EventIngestUpdated, Ingest: ing})
 
-	go m.runCopyAndVerify(ing)
+	m.launchCopyAndVerify(ing)
 
 	return ing, nil
+}
+
+// launchCopyAndVerify starts (or restarts, for Retry/ResumeInterrupted) the
+// copy+verify goroutine for a job, wiring up a cancellable context that
+// Cancel can trigger. The cancel func is registered synchronously, before
+// the goroutine is spawned, so a Cancel call made right after this returns
+// is guaranteed to find it.
+func (m *Manager) launchCopyAndVerify(ing *model.Ingest) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.cancels[ing.ID] = cancel
+	m.mu.Unlock()
+
+	go m.runCopyAndVerify(ctx, ing)
+}
+
+func (m *Manager) unregisterCancel(id int64) {
+	m.mu.Lock()
+	delete(m.cancels, id)
+	m.mu.Unlock()
 }
 
 func allowedCamera(camera string, eventCameras []string) bool {
@@ -268,10 +293,10 @@ func allowedCamera(camera string, eventCameras []string) bool {
 }
 
 // runCopyAndVerify drives one job through COPYING -> VERIFYING -> VERIFIED
-// -> SAFE_TO_EJECT, or into ERROR. It must never mark SAFE_TO_EJECT without
-// a preceding successful verify.
-func (m *Manager) runCopyAndVerify(ing *model.Ingest) {
-	ctx := context.Background()
+// -> SAFE_TO_EJECT, or into ERROR/CANCELLED. It must never mark
+// SAFE_TO_EJECT without a preceding successful verify.
+func (m *Manager) runCopyAndVerify(ctx context.Context, ing *model.Ingest) {
+	defer m.unregisterCancel(ing.ID)
 	start := time.Now()
 	var lastPublish time.Time
 
@@ -314,6 +339,10 @@ func (m *Manager) runCopyAndVerify(ing *model.Ingest) {
 
 	result, err := copyengine.Copy(ctx, ing.SourcePath, ing.DestinationPath, onProgress)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			m.cancelDuringCopy(ing)
+			return
+		}
 		m.fail(ing.ID, fmt.Sprintf("copy failed: %v", err), model.VerifyPending)
 		return
 	}
@@ -326,6 +355,10 @@ func (m *Manager) runCopyAndVerify(ing *model.Ingest) {
 
 	vres, err := verify.Verify(ctx, ing.SourcePath, ing.DestinationPath, m.hasher)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			m.cancelDuringVerify(ing)
+			return
+		}
 		m.fail(ing.ID, fmt.Sprintf("verification error: %v", err), model.VerifyFailed)
 		return
 	}
@@ -353,6 +386,33 @@ func (m *Manager) fail(id int64, msg string, vs model.VerifyResult) {
 		return
 	}
 	m.publishReload(id)
+}
+
+// cancelDuringCopy handles a cancellation observed while COPYING: the
+// destination is by definition incomplete, so it's removed rather than
+// left around as something that looks like a card folder but isn't one.
+func (m *Manager) cancelDuringCopy(ing *model.Ingest) {
+	if err := os.RemoveAll(ing.DestinationPath); err != nil {
+		log.Printf("ingest: remove partial destination for cancelled job %d: %v", ing.ID, err)
+	}
+	if err := m.db.MarkCancelled(ing.ID, "Copia cancelada por el operador.", time.Now()); err != nil {
+		log.Printf("ingest: mark cancelled for %d: %v", ing.ID, err)
+		return
+	}
+	m.publishReload(ing.ID)
+}
+
+// cancelDuringVerify handles a cancellation observed while VERIFYING: the
+// copy itself had already finished without error, so the files are left in
+// place - they just haven't been double-checked, which the CANCELLED
+// status and message make explicit rather than implying SAFE_TO_EJECT.
+func (m *Manager) cancelDuringVerify(ing *model.Ingest) {
+	msg := "Verificación cancelada por el operador: los archivos se copiaron pero no se verificaron."
+	if err := m.db.MarkCancelled(ing.ID, msg, time.Now()); err != nil {
+		log.Printf("ingest: mark cancelled for %d: %v", ing.ID, err)
+		return
+	}
+	m.publishReload(ing.ID)
 }
 
 func (m *Manager) publishReload(id int64) {
@@ -405,4 +465,88 @@ func (m *Manager) Eject(id int64) (*model.Ingest, error) {
 // RUNBOOK_MOY_MEDIA_INGEST.md section 4.2 and section 22.
 func (m *Manager) Format(id int64) error {
 	return ErrFormatDisabled
+}
+
+// Cancel stops an in-progress copy or verification. Only valid from
+// COPYING or VERIFYING - there is nothing to cancel in any other state.
+// The actual CANCELLED transition happens asynchronously in
+// runCopyAndVerify once it observes the cancelled context, so callers
+// should rely on the SSE ingest_updated event (or poll Get) rather than
+// this call's return value for the final state.
+func (m *Manager) Cancel(id int64) (*model.Ingest, error) {
+	ing, err := m.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if ing.Status != model.StatusCopying && ing.Status != model.StatusVerifying {
+		return nil, fmt.Errorf("%w: current status is %s", ErrInvalidState, ing.Status)
+	}
+
+	m.mu.Lock()
+	cancel, ok := m.cancels[id]
+	m.mu.Unlock()
+	if !ok {
+		// Shouldn't happen: COPYING/VERIFYING implies a registered cancel
+		// func. Defensive rather than a panic.
+		return nil, fmt.Errorf("%w: no running operation found for ingest %d", ErrInvalidState, id)
+	}
+	cancel()
+
+	return ing, nil
+}
+
+// Retry re-attempts a job that ended in ERROR or CANCELLED, reusing the
+// same camera/card number/destination it already had (no new camera
+// assignment, so no new card number is allocated). It always redoes the
+// full copy+verify from scratch: the copy engine overwrites destination
+// files idempotently, so this is safe even if the previous attempt got
+// partway through.
+func (m *Manager) Retry(id int64) (*model.Ingest, error) {
+	ing, err := m.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if ing.Status != model.StatusError && ing.Status != model.StatusCancelled {
+		return nil, fmt.Errorf("%w: current status is %s", ErrInvalidState, ing.Status)
+	}
+
+	if err := m.db.ResetForRetry(id, time.Now()); err != nil {
+		return nil, err
+	}
+	ing, err = m.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	m.broker.publish(Event{Type: EventIngestUpdated, Ingest: ing})
+
+	m.launchCopyAndVerify(ing)
+
+	return ing, nil
+}
+
+// ResumeInterrupted finds jobs an ungraceful shutdown left stuck in
+// COPYING or VERIFYING (no goroutine is driving them after a restart -
+// the process that owned them is gone) and redrives each one from
+// scratch, the same way Retry does. Call once at startup, before Run.
+func (m *Manager) ResumeInterrupted() error {
+	stuck, err := m.db.ListByStatus(model.StatusCopying, model.StatusVerifying)
+	if err != nil {
+		return fmt.Errorf("list interrupted jobs: %w", err)
+	}
+
+	for _, ing := range stuck {
+		log.Printf("ingest: resuming job %d (was %s when the process last stopped)", ing.ID, ing.Status)
+		if err := m.db.ResetForRetry(ing.ID, time.Now()); err != nil {
+			log.Printf("ingest: resume %d: %v", ing.ID, err)
+			continue
+		}
+		reloaded, err := m.Get(ing.ID)
+		if err != nil {
+			log.Printf("ingest: resume %d: reload: %v", ing.ID, err)
+			continue
+		}
+		m.broker.publish(Event{Type: EventIngestUpdated, Ingest: reloaded})
+		m.launchCopyAndVerify(reloaded)
+	}
+	return nil
 }

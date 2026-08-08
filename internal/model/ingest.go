@@ -19,6 +19,9 @@ const (
 	StatusSafeToEject   Status = "SAFE_TO_EJECT"
 	StatusEjected       Status = "EJECTED"
 	StatusError         Status = "ERROR"
+	// StatusCancelled is a deliberate operator action, distinct from
+	// StatusError (an unexpected failure). Both are retryable.
+	StatusCancelled Status = "CANCELLED"
 )
 
 // VerifyResult is the outcome of the verification engine, stored

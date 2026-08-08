@@ -32,6 +32,8 @@ func NewServer(mgr *ingest.Manager, webFS fs.FS) *Server {
 	s.mux.HandleFunc("GET /api/v1/ingests/{id}", s.handleGetIngest)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/assign-camera", s.handleAssignCamera)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/eject", s.handleEject)
+	s.mux.HandleFunc("POST /api/v1/ingests/{id}/cancel", s.handleCancel)
+	s.mux.HandleFunc("POST /api/v1/ingests/{id}/retry", s.handleRetry)
 	s.mux.HandleFunc("POST /api/v1/ingests/{id}/format", s.handleFormat)
 	s.mux.HandleFunc("GET /api/v1/projects", s.handleListProjects)
 	s.mux.HandleFunc("POST /api/v1/projects", s.handleCreateProject)
@@ -188,6 +190,34 @@ func (s *Server) handleEject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ing)
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ing, err := s.mgr.Cancel(id)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, ing)
+}
+
+func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	ing, err := s.mgr.Retry(id)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, ing)
 }
 
 func (s *Server) handleFormat(w http.ResponseWriter, r *http.Request) {

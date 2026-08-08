@@ -67,6 +67,10 @@ func createMockCard(t *testing.T, mockRoot, name string) {
 	}
 }
 
+// waitForIngest waits until a card reaches WAITING_CAMERA specifically -
+// not just "exists in the DB" - since detection briefly passes through
+// DETECTED first (see Manager.scanOnce) and tests calling this want a card
+// that's actually ready for camera assignment.
 func waitForIngest(t *testing.T, mgr *ingest.Manager, identifier string) *model.Ingest {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -74,14 +78,14 @@ func waitForIngest(t *testing.T, mgr *ingest.Manager, identifier string) *model.
 		list, err := mgr.List()
 		if err == nil {
 			for _, ing := range list {
-				if ing.SourceIdentifier == identifier {
+				if ing.SourceIdentifier == identifier && ing.Status == model.StatusWaitingCamera {
 					return ing
 				}
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("ingest for %q was not detected in time", identifier)
+	t.Fatalf("ingest for %q did not reach WAITING_CAMERA in time", identifier)
 	return nil
 }
 
@@ -162,6 +166,38 @@ func TestEject_BeforeSafeToEjectReturns409(t *testing.T) {
 	ing := waitForIngest(t, mgr, "CARD_B")
 
 	rec := doJSON(srv, "POST", "/api/v1/ingests/"+itoa(ing.ID)+"/eject", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCancel_BeforeCopyingReturns409(t *testing.T) {
+	srv, mgr, mockRoot := newTestServer(t)
+	createMockCard(t, mockRoot, "CARD_CANCEL")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	ing := waitForIngest(t, mgr, "CARD_CANCEL")
+
+	rec := doJSON(srv, "POST", "/api/v1/ingests/"+itoa(ing.ID)+"/cancel", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRetry_BeforeErrorReturns409(t *testing.T) {
+	srv, mgr, mockRoot := newTestServer(t)
+	createMockCard(t, mockRoot, "CARD_RETRY")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	ing := waitForIngest(t, mgr, "CARD_RETRY")
+
+	rec := doJSON(srv, "POST", "/api/v1/ingests/"+itoa(ing.ID)+"/retry", nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}

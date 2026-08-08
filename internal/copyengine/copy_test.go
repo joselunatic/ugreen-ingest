@@ -2,8 +2,11 @@ package copyengine
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +61,32 @@ func TestCopy_PreservesTreeAndDoesNotModifySource(t *testing.T) {
 	afterHash := mustHashTree(t, src)
 	if beforeHash != afterHash {
 		t.Fatal("source tree was modified by Copy")
+	}
+}
+
+// TestCopy_RespectsCancellation feeds cancel() a specific point in the
+// walk (via the progress callback) so the test is deterministic instead of
+// racing wall-clock timing.
+func TestCopy_RespectsCancellation(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	for i := 0; i < 20; i++ {
+		writeFile(t, filepath.Join(src, fmt.Sprintf("file_%02d.bin", i)), strings.Repeat("x", 4096))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	filesSeen := 0
+	_, err := Copy(ctx, src, dst, func(p Progress) {
+		filesSeen++
+		if filesSeen == 3 {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if filesSeen >= 20 {
+		t.Fatal("expected cancellation to stop the copy before all files were processed")
 	}
 }
 

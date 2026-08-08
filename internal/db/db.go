@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ugreen-ingest/ugreen-ingest/internal/model"
@@ -189,6 +190,61 @@ func (d *DB) MarkEjected(id int64, ejectedAt time.Time) error {
 		model.StatusEjected, timeToStr(ejectedAt), id,
 	)
 	return err
+}
+
+// MarkCancelled records a deliberate operator cancellation. It never
+// touches SAFE_TO_EJECT.
+func (d *DB) MarkCancelled(id int64, msg string, finishedAt time.Time) error {
+	_, err := d.sql.Exec(
+		`UPDATE ingests SET status = ?, error_message = ?, finished_at = ? WHERE id = ?`,
+		model.StatusCancelled, msg, timeToStr(finishedAt), id,
+	)
+	return err
+}
+
+// ResetForRetry puts an ERROR/CANCELLED job back into COPYING using the
+// camera/card_number/destination_path it already had, so a retry redoes
+// the copy+verify without going through camera assignment (and its card
+// numbering) again.
+func (d *DB) ResetForRetry(id int64, startedAt time.Time) error {
+	_, err := d.sql.Exec(
+		`UPDATE ingests SET status = ?, started_at = ?, bytes_copied = 0,
+		 copy_completed_at = NULL, verify_completed_at = NULL, finished_at = NULL,
+		 verify_status = ?, error_message = '' WHERE id = ?`,
+		model.StatusCopying, timeToStr(startedAt), model.VerifyPending, id,
+	)
+	return err
+}
+
+// ListByStatus returns every ingest currently in one of the given statuses.
+// Used at startup to find jobs an ungraceful shutdown left mid-flight.
+func (d *DB) ListByStatus(statuses ...model.Status) ([]*model.Ingest, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	query := selectColumns + ` WHERE status IN (` + strings.Join(placeholders, ",") + `)`
+
+	rows, err := d.sql.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*model.Ingest
+	for rows.Next() {
+		ing, err := scanIngest(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ing)
+	}
+	return out, rows.Err()
 }
 
 // NextCardNumber returns the next sequential card number (e.g. "CARD003")

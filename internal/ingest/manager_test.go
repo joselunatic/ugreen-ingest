@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,29 @@ func writeMockCard(t *testing.T, mockRoot, name string) string {
 	return cardDir
 }
 
+// writeLargeMockCard creates enough files/bytes that a copy takes long
+// enough (real disk I/O, not instant) for a cancel issued immediately
+// after AssignCamera returns to reliably land mid-copy.
+func writeLargeMockCard(t *testing.T, mockRoot, name string, fileCount int) string {
+	t.Helper()
+	cardDir := filepath.Join(mockRoot, name)
+	content := make([]byte, 256*1024)
+	for i := range fileCount {
+		p := filepath.Join(cardDir, fmt.Sprintf("CLIP_%04d.MOV", i))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cardDir
+}
+
+// findByIdentifier waits until a card reaches WAITING_CAMERA specifically -
+// not just "exists in the DB" - since detection briefly passes through
+// DETECTED first (see Manager.scanOnce), and every caller of this helper
+// goes on to call AssignCamera, which requires WAITING_CAMERA.
 func findByIdentifier(t *testing.T, mgr *Manager, identifier string) int64 {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -76,7 +100,7 @@ func findByIdentifier(t *testing.T, mgr *Manager, identifier string) int64 {
 		list, err := mgr.List()
 		if err == nil {
 			for _, ing := range list {
-				if ing.SourceIdentifier == identifier {
+				if ing.SourceIdentifier == identifier && ing.Status == model.StatusWaitingCamera {
 					return ing.ID
 				}
 			}
@@ -348,5 +372,119 @@ func TestCreateEvent_RejectsInvalidNameAndEmptyCameraList(t *testing.T) {
 	}
 	if _, err := mgr.CreateEvent("VALID_NAME", []string{"OTHER"}); !errors.Is(err, ErrInvalidCameraList) {
 		t.Fatalf("expected ErrInvalidCameraList when only the implicit OTHER camera is given, got %v", err)
+	}
+}
+
+func TestCancel_RequiresCopyingOrVerifying(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	writeMockCard(t, mockRoot, "CARD_CANCEL_INVALID")
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_CANCEL_INVALID")
+
+	if _, err := mgr.Cancel(id); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("expected ErrInvalidState cancelling a WAITING_CAMERA job, got %v", err)
+	}
+}
+
+// TestCancel_DuringCopy_MarksCancelledAndRemovesPartialDestination is
+// necessarily a bit timing-sensitive (it cancels a real background copy),
+// so the fixture uses enough files/bytes that the copy takes long enough
+// in wall-clock terms for a Cancel call issued immediately after
+// AssignCamera returns to reliably land before the copy finishes.
+func TestCancel_DuringCopy_MarksCancelledAndRemovesPartialDestination(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	writeLargeMockCard(t, mockRoot, "CARD_CANCEL_DURING_COPY", 400)
+
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_CANCEL_DURING_COPY")
+
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("AssignCamera: %v", err)
+	}
+	if _, err := mgr.Cancel(id); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	final := waitForStatus(t, mgr, id, model.StatusCancelled, 5*time.Second)
+	if final.ErrorMessage == "" {
+		t.Error("expected a cancellation message explaining what happened")
+	}
+	if _, err := os.Stat(final.DestinationPath); !os.IsNotExist(err) {
+		t.Errorf("expected the partial destination to be removed, stat err = %v", err)
+	}
+}
+
+func TestRetry_RequiresErrorOrCancelled(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	writeMockCard(t, mockRoot, "CARD_RETRY_INVALID")
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_RETRY_INVALID")
+
+	if _, err := mgr.Retry(id); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("expected ErrInvalidState retrying a WAITING_CAMERA job, got %v", err)
+	}
+}
+
+func TestRetry_FromError_RedrivesToSafeToEject(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	writeMockCard(t, mockRoot, "CARD_RETRY_FROM_ERROR")
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_RETRY_FROM_ERROR")
+
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("AssignCamera: %v", err)
+	}
+	waitForStatus(t, mgr, id, model.StatusSafeToEject, 3*time.Second)
+
+	// Simulate a real failure having occurred (e.g. a transient read
+	// error), independent of the cancellation path already covered above.
+	if err := mgr.db.MarkError(id, "simulated failure for retry test", model.VerifyFailed, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := mgr.Retry(id)
+	if err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if retried.Status != model.StatusCopying {
+		t.Fatalf("expected COPYING immediately after Retry, got %s", retried.Status)
+	}
+	if retried.CameraID != "CAM01" || retried.CardNumber != "CARD001" {
+		t.Fatalf("expected retry to keep the original camera/card number, got %s/%s", retried.CameraID, retried.CardNumber)
+	}
+
+	final := waitForStatus(t, mgr, id, model.StatusSafeToEject, 3*time.Second)
+	if final.VerifyStatus != model.VerifyOK {
+		t.Errorf("expected retry to succeed with VerifyOK, got %s", final.VerifyStatus)
+	}
+}
+
+// TestResumeInterrupted_RedrivesStuckJobs simulates the process having
+// died mid-copy (nothing on disk actually needs to be broken - the copy
+// engine's overwrite-everything behavior makes a redrive safe/idempotent
+// either way) by forcing a completed job's status back to COPYING, then
+// checks ResumeInterrupted notices and finishes it.
+func TestResumeInterrupted_RedrivesStuckJobs(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	writeMockCard(t, mockRoot, "CARD_RESUME")
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_RESUME")
+
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("AssignCamera: %v", err)
+	}
+	waitForStatus(t, mgr, id, model.StatusSafeToEject, 3*time.Second)
+
+	if err := mgr.db.UpdateStatus(id, model.StatusCopying); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mgr.ResumeInterrupted(); err != nil {
+		t.Fatalf("ResumeInterrupted: %v", err)
+	}
+
+	final := waitForStatus(t, mgr, id, model.StatusSafeToEject, 3*time.Second)
+	if final.VerifyStatus != model.VerifyOK {
+		t.Errorf("expected resumed job to reach VerifyOK, got %s", final.VerifyStatus)
 	}
 }

@@ -2,7 +2,7 @@
   "use strict";
 
   const ACTIVE_STATUSES = new Set([
-    "DETECTED", "WAITING_CAMERA", "COPYING", "VERIFYING", "VERIFIED", "SAFE_TO_EJECT", "ERROR",
+    "DETECTED", "WAITING_CAMERA", "COPYING", "VERIFYING", "VERIFIED", "SAFE_TO_EJECT", "ERROR", "CANCELLED",
   ]);
 
   const STATUS_LABEL = {
@@ -13,6 +13,7 @@
     VERIFIED: "VERIFICADO",
     SAFE_TO_EJECT: "SEGURO RETIRAR",
     ERROR: "ERROR",
+    CANCELLED: "CANCELADA",
     EJECTED: "EXPULSADA",
   };
 
@@ -24,6 +25,7 @@
     VERIFIED: "verified",
     SAFE_TO_EJECT: "safe",
     ERROR: "error",
+    CANCELLED: "cancelled",
     EJECTED: "ejected",
   };
 
@@ -150,7 +152,10 @@
     el.classList.toggle("show-camera-picker", ing.status === "WAITING_CAMERA" || ing.status === "DETECTED");
     el.classList.toggle("show-progress", ["COPYING", "VERIFYING", "VERIFIED", "SAFE_TO_EJECT"].includes(ing.status));
     el.classList.toggle("show-error", ing.status === "ERROR");
+    el.classList.toggle("show-cancelled-msg", ing.status === "CANCELLED");
     el.classList.toggle("show-actions", ing.status === "SAFE_TO_EJECT");
+    el.classList.toggle("show-cancel-action", ing.status === "COPYING" || ing.status === "VERIFYING");
+    el.classList.toggle("show-retry-action", ing.status === "ERROR" || ing.status === "CANCELLED");
 
     if (ing.status === "WAITING_CAMERA" || ing.status === "DETECTED") {
       renderCameraButtons(el, ing);
@@ -161,10 +166,21 @@
     if (ing.status === "ERROR") {
       el.querySelector(".error-block").textContent = ing.error_message || "Error desconocido";
     }
+    if (ing.status === "CANCELLED") {
+      el.querySelector(".cancelled-block").textContent = ing.error_message || "Operación cancelada";
+    }
 
     const ejectBtn = el.querySelector(".btn-eject");
     ejectBtn.onclick = () => doEject(ing.id, ejectBtn);
     ejectBtn.disabled = false;
+
+    const cancelBtn = el.querySelector(".btn-cancel");
+    cancelBtn.onclick = () => doCancel(ing.id, cancelBtn);
+    cancelBtn.disabled = false;
+
+    const retryBtn = el.querySelector(".btn-retry");
+    retryBtn.onclick = () => doRetry(ing.id, retryBtn);
+    retryBtn.disabled = false;
   }
 
   function renderCameraButtons(el, ing) {
@@ -260,6 +276,39 @@
       }
     } catch (e) {
       alert("Error de red al expulsar: " + e.message);
+      btn.disabled = false;
+    }
+  }
+
+  async function doCancel(id, btn) {
+    if (!confirm("¿Cancelar la copia en curso? Si estaba copiando, el destino parcial se eliminará.")) {
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/v1/ingests/${id}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert("No se pudo cancelar: " + (err.error || res.statusText));
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert("Error de red al cancelar: " + e.message);
+      btn.disabled = false;
+    }
+  }
+
+  async function doRetry(id, btn) {
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/v1/ingests/${id}/retry`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert("No se pudo reintentar: " + (err.error || res.statusText));
+        btn.disabled = false;
+      }
+    } catch (e) {
+      alert("Error de red al reintentar: " + e.message);
       btn.disabled = false;
     }
   }
