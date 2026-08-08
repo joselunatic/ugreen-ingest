@@ -23,17 +23,29 @@
   <div class="project" id="project-name">&nbsp;</div>
   <div class="health">
     <span class="dot" id="health-dot"></span>
-    <span id="health-label">NAS: ...</span>
+    <span id="health-label">NAS: &ndash;</span>
   </div>
   <div class="health">
     <span class="dot" id="storage-dot"></span>
-    <span id="storage-label">Storage: ...</span>
+    <span id="storage-label">Almacenamiento: &ndash;</span>
   </div>
 </header>
 
 <main>
   <section id="active-area" class="active-area">
-    <p class="idle-message" id="idle-message">Esperando tarjeta&hellip;</p>
+    <div class="idle-state" id="idle-state">
+      <div class="idle-icon-ring">
+        <svg class="idle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <path d="M3 9.5h18"/>
+          <circle cx="8" cy="14.5" r="1.3" fill="currentColor" stroke="none"/>
+          <circle cx="13" cy="14.5" r="1.3" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <p class="idle-message">Esperando tarjeta<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+      <p class="idle-hint">Inserta una SD o CFexpress en el lector para empezar</p>
+      <p class="idle-stats" id="idle-stats"></p>
+    </div>
   </section>
 
   <section class="history">
@@ -61,7 +73,7 @@
   <article class="card">
     <div class="card-header">
       <span class="card-title"></span>
-      <span class="status-pill"></span>
+      <span class="status-pill"><span class="pill-icon"></span><span class="status-pill-text"></span></span>
     </div>
     <div class="no-eject-banner">NO RETIRAR TARJETA</div>
     <div class="camera-picker">
@@ -69,12 +81,15 @@
       <div class="camera-buttons"></div>
     </div>
     <div class="progress-block">
+      <div class="progress-headline">
+        <span class="progress-percent">0%</span>
+        <span class="progress-speed"></span>
+      </div>
       <div class="progress-bar"><div class="progress-fill"></div></div>
       <div class="progress-stats">
         <span class="progress-bytes"></span>
-        <span class="progress-speed"></span>
+        <span class="progress-files"></span>
       </div>
-      <div class="progress-files"></div>
     </div>
     <div class="error-block"></div>
     <div class="cancelled-block"></div>

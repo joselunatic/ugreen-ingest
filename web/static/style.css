@@ -7,6 +7,11 @@
  * display face ("Poly Sans Bulky") - that font isn't ours to embed, so this
  * approximates the same bulky/black look without a webfont dependency
  * (this app must keep working with no internet access at a venue).
+ *
+ * Motion is deliberately restrained: everything below reinforces a state
+ * (copying/verifying/success/error) rather than decorating for its own
+ * sake, and every animation respects prefers-reduced-motion at the bottom
+ * of this file.
  */
 :root {
   --bg: #1a191d;
@@ -33,6 +38,28 @@ html, body {
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
+
+body {
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* A very slow, very subtle ambient drift behind everything - keeps the
+   idle screen from reading as "frozen" to someone glancing over from
+   across the room, without calling attention to itself. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -15%;
+  background:
+    radial-gradient(circle at 25% 20%, rgba(0, 238, 187, 0.05), transparent 42%),
+    radial-gradient(circle at 78% 75%, rgba(0, 238, 187, 0.04), transparent 46%);
+  animation: ambientDrift 26s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.topbar, main { position: relative; z-index: 1; }
 
 button { font-family: inherit; }
 
@@ -94,7 +121,10 @@ h1, h2, .card-title, .brand-name, .status-pill, .btn, .btn-camera {
   background: var(--muted);
   display: inline-block;
 }
-.dot.ok { background: var(--accent); }
+.dot.ok {
+  background: var(--accent);
+  animation: dotPulse 2.4s ease-out infinite;
+}
 .dot.down { background: var(--red); }
 
 main {
@@ -108,14 +138,68 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 1.25rem;
+  min-height: 20rem;
 }
 
-.idle-message {
+/* Idle screen - this is what a passer-by sees most of the time, so it
+   needs to look alive and intentional, not like a frozen error page. */
+.idle-state {
   grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  color: var(--muted);
-  font-size: 1.6rem;
   padding: 3rem 0;
+}
+
+.idle-icon-ring {
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 238, 187, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+  color: var(--accent);
+  animation: idleRingPulse 2.6s ease-in-out infinite;
+}
+.idle-icon { width: 2.3rem; height: 2.3rem; }
+
+.idle-message {
+  color: var(--text);
+  font-size: 1.7rem;
+  font-weight: 800;
+  margin: 0;
+}
+
+.dots { display: inline-flex; gap: 0.15em; margin-left: 0.2em; }
+.dots i {
+  display: inline-block;
+  width: 0.35em;
+  height: 0.35em;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: dotBlink 1.4s infinite;
+}
+.dots i:nth-child(2) { animation-delay: 0.2s; }
+.dots i:nth-child(3) { animation-delay: 0.4s; }
+
+.idle-hint {
+  color: var(--muted);
+  font-size: 1.05rem;
+  margin: 0.6rem 0 0;
+}
+
+.idle-stats {
+  margin: 1.5rem 0 0;
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-height: 1.2em;
 }
 
 .card {
@@ -125,6 +209,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .card-header {
@@ -139,6 +224,8 @@ main {
 }
 
 .status-pill {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.95rem;
   letter-spacing: 0.04em;
   padding: 0.35rem 0.9rem;
@@ -147,6 +234,16 @@ main {
   color: var(--text);
   white-space: nowrap;
 }
+.pill-icon {
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 0.4em;
+  flex: none;
+}
+.pill-icon svg { display: block; width: 100%; height: 100%; }
+.pill-icon .spin { animation: spin 1s linear infinite; transform-origin: center; }
+.pill-icon .draw { stroke-dasharray: 28; stroke-dashoffset: 28; animation: drawCheck 0.45s ease forwards; }
+
 .status-pill.waiting { color: var(--text); border-color: rgba(255, 255, 255, 0.35); }
 .status-pill.copying,
 .status-pill.verifying { color: var(--amber); border-color: var(--amber); }
@@ -156,6 +253,23 @@ main {
 .status-pill.cancelled { color: var(--amber); border-color: var(--amber); border-style: dashed; }
 .status-pill.ejected { color: var(--muted); border-color: var(--border); }
 
+/* One-shot feedback when a card crosses into a meaningful new state -
+   never looping, so it reads as an event, not a decoration. */
+@keyframes cardPulseSuccess {
+  0% { box-shadow: 0 0 0 0 rgba(0, 238, 187, 0.55); }
+  70% { box-shadow: 0 0 0 20px rgba(0, 238, 187, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 238, 187, 0); }
+}
+.card.pulse-success { animation: cardPulseSuccess 0.9s ease-out; }
+
+@keyframes cardShakeError {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+.card.shake-error { animation: cardShakeError 0.5s; }
+
 .no-eject-banner {
   display: none;
   background: var(--red);
@@ -164,6 +278,7 @@ main {
   text-align: center;
   padding: 0.6rem;
   letter-spacing: 0.05em;
+  animation: bannerBreathe 1.8s ease-in-out infinite;
 }
 .card.show-no-eject .no-eject-banner { display: block; }
 
@@ -189,16 +304,39 @@ main {
   background: var(--panel-alt);
   color: var(--text);
   cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
 }
 .btn-camera:active {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
+  transform: scale(0.97);
 }
 .btn-camera:disabled { opacity: 0.5; }
 
 .progress-block { display: none; }
 .card.show-progress .progress-block { display: block; }
+
+.progress-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.progress-percent {
+  font-size: 2.25rem;
+  font-weight: 900;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.progress-speed {
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 600;
+}
 
 .progress-bar {
   height: 1.5rem;
@@ -208,24 +346,43 @@ main {
 }
 
 .progress-fill {
+  position: relative;
   height: 100%;
   width: 0%;
   background: var(--accent);
-  transition: width 0.2s ease;
+  transition: width 0.25s ease;
+  overflow: hidden;
+}
+
+/* Moving stripes only while bytes are actually being written - a settled
+   bar at 100% during verification would otherwise look identical to done. */
+.card.state-copying .progress-fill {
+  background-image: linear-gradient(
+    135deg,
+    rgba(13, 15, 14, 0.16) 25%, transparent 25%,
+    transparent 50%, rgba(13, 15, 14, 0.16) 50%,
+    rgba(13, 15, 14, 0.16) 75%, transparent 75%, transparent
+  );
+  background-size: 1.4rem 1.4rem;
+  animation: progressStripes 0.9s linear infinite;
+}
+
+/* A soft scanning sweep while verifying - visually distinct from "filling
+   up", reinforcing "checking", not "writing". */
+.card.state-verifying .progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: verifyScan 1.3s ease-in-out infinite;
 }
 
 .progress-stats {
   display: flex;
   justify-content: space-between;
   margin-top: 0.5rem;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
-}
-
-.progress-files {
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 0.95rem;
 }
 
 .error-block {
@@ -262,13 +419,15 @@ main {
   letter-spacing: 0.04em;
   border: none;
   cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.15s ease;
 }
+.btn:active { transform: scale(0.97); }
 
 .btn-eject {
   background: var(--accent);
   color: var(--accent-ink);
 }
-.btn-eject:active { opacity: 0.8; }
+.btn-eject:active { opacity: 0.85; }
 .btn-eject:disabled { opacity: 0.5; }
 
 .btn-cancel {
@@ -321,9 +480,72 @@ thead th {
   top: 0;
 }
 
+tbody tr {
+  transition: background 0.15s ease;
+}
+tbody tr:hover { background: var(--panel-alt); }
 tbody tr:last-child td { border-bottom: none; }
+
+@keyframes ambientDrift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(2%, -2%, 0) scale(1.06); }
+}
+
+@keyframes idleRingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 238, 187, 0.28); }
+  50% { box-shadow: 0 0 0 14px rgba(0, 238, 187, 0); }
+}
+
+@keyframes dotBlink {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+
+@keyframes dotPulse {
+  0% { box-shadow: 0 0 0 0 rgba(0, 238, 187, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(0, 238, 187, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 238, 187, 0); }
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes bannerBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes drawCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes progressStripes {
+  from { background-position: 0 0; }
+  to { background-position: 1.4rem 0; }
+}
+
+@keyframes verifyScan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
 
 @media (max-width: 900px) {
   :root { font-size: 17px; }
   .active-area { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  body::before { display: none; }
 }

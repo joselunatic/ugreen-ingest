@@ -29,14 +29,36 @@
     EJECTED: "ejected",
   };
 
-  const ingests = new Map();   // id -> ingest record (server truth)
+  // Small stroke-based icons, inlined per status so they need no external
+  // sprite/shadow-DOM styling tricks. currentColor picks up the pill's
+  // text color automatically.
+  const ICON_CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.2"/></svg>';
+  const ICON_SPINNER = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 1-6.36 2.64"/></svg>';
+  const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path class="draw" d="M4 12.5l5 5L20 6"/></svg>';
+  const ICON_WARNING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 2 20.5h20L12 3.5Z"/><path d="M12 10v4.5"/><circle cx="12" cy="17.5" r="0.6" fill="currentColor" stroke="none"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+
+  const STATUS_ICON = {
+    DETECTED: ICON_CAMERA,
+    WAITING_CAMERA: ICON_CAMERA,
+    COPYING: ICON_SPINNER,
+    VERIFYING: ICON_SPINNER,
+    VERIFIED: ICON_CHECK,
+    SAFE_TO_EJECT: ICON_CHECK,
+    ERROR: ICON_WARNING,
+    CANCELLED: ICON_PAUSE,
+  };
+
+  const ingests = new Map();      // id -> ingest record (server truth)
   const liveProgress = new Map(); // id -> latest progress event (transient)
-  const cardEls = new Map();   // id -> DOM element
+  const cardEls = new Map();      // id -> DOM element
+  const lastStatus = new Map();   // id -> previous status, to gate one-shot effects
   let cameras = [];
   let assigning = new Set();
 
   const activeArea = document.getElementById("active-area");
-  const idleMessage = document.getElementById("idle-message");
+  const idleState = document.getElementById("idle-state");
+  const idleStats = document.getElementById("idle-stats");
   const historyBody = document.getElementById("history-body");
   const cardTemplate = document.getElementById("card-template");
   const projectNameEl = document.getElementById("project-name");
@@ -69,7 +91,11 @@
   function formatTime(iso) {
     if (!iso) return "";
     const d = new Date(iso);
-    return d.toLocaleString();
+    return d.toLocaleString("es-ES");
+  }
+
+  function pluralize(count, singular, plural) {
+    return count === 1 ? singular : plural;
   }
 
   async function loadConfig() {
@@ -113,7 +139,8 @@
     const active = all.filter((i) => ACTIVE_STATUSES.has(i.status)).sort((a, b) => a.id - b.id);
     const history = all.slice().sort((a, b) => b.id - a.id);
 
-    idleMessage.style.display = active.length === 0 ? "" : "none";
+    idleState.style.display = active.length === 0 ? "" : "none";
+    if (active.length === 0) renderIdleStats(all);
 
     const seen = new Set();
     for (const ing of active) {
@@ -124,10 +151,27 @@
       if (!seen.has(id)) {
         el.remove();
         cardEls.delete(id);
+        lastStatus.delete(id);
       }
     }
 
     renderHistory(history);
+  }
+
+  function renderIdleStats(all) {
+    const todayKey = new Date().toDateString();
+    let count = 0;
+    let bytes = 0;
+    for (const ing of all) {
+      if (!ing.detected_at || new Date(ing.detected_at).toDateString() !== todayKey) continue;
+      count++;
+      if (ing.status === "SAFE_TO_EJECT" || ing.status === "EJECTED") {
+        bytes += ing.bytes_copied || 0;
+      }
+    }
+    idleStats.textContent = count > 0
+      ? `Hoy: ${count} ${pluralize(count, "tarjeta", "tarjetas")} · ${formatBytes(bytes)} verificados`
+      : "";
   }
 
   function renderCard(ing) {
@@ -138,10 +182,16 @@
       cardEls.set(ing.id, el);
     }
 
+    const statusChanged = lastStatus.get(ing.id) !== ing.status;
+    lastStatus.set(ing.id, ing.status);
+
     const statusClass = STATUS_CLASS[ing.status] || "";
-    el.className = "card";
     el.querySelector(".status-pill").className = "status-pill " + statusClass;
-    el.querySelector(".status-pill").textContent = STATUS_LABEL[ing.status] || ing.status;
+    if (statusChanged) {
+      el.querySelector(".pill-icon").innerHTML = STATUS_ICON[ing.status] || "";
+      triggerTransitionEffect(el, ing.status);
+    }
+    el.querySelector(".status-pill-text").textContent = STATUS_LABEL[ing.status] || ing.status;
 
     const title = ing.camera_id
       ? `${cameraLabel(ing.camera_id)} - ${ing.card_number}`
@@ -156,6 +206,8 @@
     el.classList.toggle("show-actions", ing.status === "SAFE_TO_EJECT");
     el.classList.toggle("show-cancel-action", ing.status === "COPYING" || ing.status === "VERIFYING");
     el.classList.toggle("show-retry-action", ing.status === "ERROR" || ing.status === "CANCELLED");
+    el.classList.toggle("state-copying", ing.status === "COPYING");
+    el.classList.toggle("state-verifying", ing.status === "VERIFYING");
 
     if (ing.status === "WAITING_CAMERA" || ing.status === "DETECTED") {
       renderCameraButtons(el, ing);
@@ -164,10 +216,10 @@
       renderProgress(el, ing);
     }
     if (ing.status === "ERROR") {
-      el.querySelector(".error-block").textContent = ing.error_message || "Error desconocido";
+      el.querySelector(".error-block").textContent = ing.error_message || "Error desconocido.";
     }
     if (ing.status === "CANCELLED") {
-      el.querySelector(".cancelled-block").textContent = ing.error_message || "Operación cancelada";
+      el.querySelector(".cancelled-block").textContent = ing.error_message || "Operación cancelada.";
     }
 
     const ejectBtn = el.querySelector(".btn-eject");
@@ -175,12 +227,29 @@
     ejectBtn.disabled = false;
 
     const cancelBtn = el.querySelector(".btn-cancel");
-    cancelBtn.onclick = () => doCancel(ing.id, cancelBtn);
+    cancelBtn.onclick = () => doCancel(ing.id, cancelBtn, ing.status);
     cancelBtn.disabled = false;
 
     const retryBtn = el.querySelector(".btn-retry");
     retryBtn.onclick = () => doRetry(ing.id, retryBtn);
     retryBtn.disabled = false;
+  }
+
+  // Brief, one-shot feedback exactly when a card crosses into SAFE_TO_EJECT
+  // or ERROR - never replayed on unrelated re-renders (gated by
+  // statusChanged in renderCard), and never looping.
+  function triggerTransitionEffect(el, status) {
+    if (status === "SAFE_TO_EJECT") {
+      restartAnimation(el, "pulse-success");
+    } else if (status === "ERROR") {
+      restartAnimation(el, "shake-error");
+    }
+  }
+
+  function restartAnimation(el, className) {
+    el.classList.remove(className);
+    void el.offsetWidth; // force reflow so the same class can retrigger
+    el.classList.add(className);
   }
 
   function renderCameraButtons(el, ing) {
@@ -208,7 +277,10 @@
     } else {
       percent = live ? live.percent : (total > 0 ? (copied / total) * 100 : 0);
     }
-    el.querySelector(".progress-fill").style.width = Math.min(100, Math.max(0, percent)).toFixed(0) + "%";
+    percent = Math.min(100, Math.max(0, percent));
+
+    el.querySelector(".progress-fill").style.width = percent.toFixed(0) + "%";
+    el.querySelector(".progress-percent").textContent = percent.toFixed(0) + "%";
     el.querySelector(".progress-bytes").textContent = `${formatBytes(copied)} / ${formatBytes(total)}`;
 
     const speedEl = el.querySelector(".progress-speed");
@@ -217,7 +289,7 @@
       speedEl.textContent = live ? formatSpeed(live.speed_bytes_per_sec) : "";
       filesEl.textContent = `${(live && live.files_copied) || 0} / ${ing.file_count || 0} archivos`;
     } else if (ing.status === "VERIFYING") {
-      speedEl.textContent = "Verificando contenido...";
+      speedEl.textContent = "Verificando…";
       filesEl.textContent = `${ing.file_count || 0} archivos`;
     } else {
       speedEl.textContent = "";
@@ -254,11 +326,11 @@
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert("No se pudo asignar la cámara: " + (err.error || res.statusText));
+        alert("No se ha podido asignar la cámara: " + (err.error || res.statusText));
         wrap.querySelectorAll("button").forEach((b) => (b.disabled = false));
       }
     } catch (e) {
-      alert("Error de red asignando cámara: " + e.message);
+      alert("Error de red al asignar la cámara: " + e.message);
       wrap.querySelectorAll("button").forEach((b) => (b.disabled = false));
     } finally {
       assigning.delete(id);
@@ -271,7 +343,7 @@
       const res = await fetch(`/api/v1/ingests/${id}/eject`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert("No se pudo expulsar: " + (err.error || res.statusText));
+        alert("No se ha podido expulsar: " + (err.error || res.statusText));
         btn.disabled = false;
       }
     } catch (e) {
@@ -280,16 +352,18 @@
     }
   }
 
-  async function doCancel(id, btn) {
-    if (!confirm("¿Cancelar la copia en curso? Si estaba copiando, el destino parcial se eliminará.")) {
-      return;
-    }
+  async function doCancel(id, btn, status) {
+    const message = status === "VERIFYING"
+      ? "¿Cancelar la verificación? Los archivos ya copiados se conservarán, pero no quedarán verificados."
+      : "¿Cancelar la copia? Se eliminará lo que se haya copiado hasta ahora.";
+    if (!confirm(message)) return;
+
     btn.disabled = true;
     try {
       const res = await fetch(`/api/v1/ingests/${id}/cancel`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert("No se pudo cancelar: " + (err.error || res.statusText));
+        alert("No se ha podido cancelar: " + (err.error || res.statusText));
         btn.disabled = false;
       }
     } catch (e) {
@@ -304,7 +378,7 @@
       const res = await fetch(`/api/v1/ingests/${id}/retry`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert("No se pudo reintentar: " + (err.error || res.statusText));
+        alert("No se ha podido reintentar: " + (err.error || res.statusText));
         btn.disabled = false;
       }
     } catch (e) {
@@ -331,11 +405,11 @@
       const percent = status.storage ? status.storage.percent_used : 0;
       const low = percent >= STORAGE_WARN_PERCENT;
       storageDot.className = "dot " + (low ? "down" : "ok");
-      storageLabel.textContent = "Storage: " + (low ? "BAJO" : "OK");
+      storageLabel.textContent = "Almacenamiento: " + (low ? "BAJO" : "OK");
       projectNameEl.textContent = "Proyecto: " + (status.active_event || "");
     } catch {
       storageDot.className = "dot down";
-      storageLabel.textContent = "Storage: SIN DATOS";
+      storageLabel.textContent = "Almacenamiento: SIN DATOS";
     }
   }
 

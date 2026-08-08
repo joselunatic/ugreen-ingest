@@ -50,7 +50,7 @@
         <span>${formatBytes(s.bytes_free)} libres de ${formatBytes(s.bytes_total)} (${percent.toFixed(0)}% usado)</span>
       `;
     } catch (e) {
-      storageWidget.textContent = "No se pudo consultar el almacenamiento: " + e.message;
+      storageWidget.textContent = "No se ha podido consultar el almacenamiento: " + e.message;
     }
   }
 
@@ -132,7 +132,7 @@
       const res = await fetch(`/api/v1/projects/${id}/activate`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert("No se pudo activar el evento: " + (err.error || res.statusText));
+        alert("No se ha podido activar el evento: " + (err.error || res.statusText));
         btn.disabled = false;
         return;
       }

@@ -55,6 +55,7 @@ body { user-select: text; }
 .storage-bar-fill {
   height: 100%;
   background: var(--accent);
+  transition: width 0.4s ease;
 }
 .storage-bar-fill.warn { background: var(--red); }
 
@@ -95,9 +96,11 @@ body { user-select: text; }
 .btn-accent {
   background: var(--accent);
   color: var(--accent-ink);
+  transition: opacity 0.15s ease, transform 0.1s ease;
 }
 .btn-accent:hover { opacity: 0.85; }
-.btn-accent:disabled { opacity: 0.5; cursor: default; }
+.btn-accent:active { transform: scale(0.97); }
+.btn-accent:disabled { opacity: 0.5; cursor: default; transform: none; }
 
 .btn-outline {
   background: transparent;
@@ -106,9 +109,24 @@ body { user-select: text; }
   padding: 0.4rem 0.9rem;
   font-size: 0.9rem;
   font-weight: 700;
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
-.btn-outline:disabled { opacity: 0.4; cursor: default; }
+.btn-outline:active { transform: scale(0.97); }
+.btn-outline:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+.panel { animation: panelIn 0.3s ease-out; }
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 .form-error {
   color: var(--red);
