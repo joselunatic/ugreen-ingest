@@ -132,6 +132,26 @@ func waitForStatus(t *testing.T, mgr *Manager, id int64, want model.Status, time
 	return nil
 }
 
+// waitForTerminal waits until a job settles in ERROR or SAFE_TO_EJECT, for
+// tests where ERROR is the expected outcome (waitForStatus fails on ERROR).
+func waitForTerminal(t *testing.T, mgr *Manager, id int64, timeout time.Duration) *model.Ingest {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last *model.Ingest
+	for time.Now().Before(deadline) {
+		ing, err := mgr.Get(id)
+		if err == nil {
+			last = ing
+			if ing.Status == model.StatusError || ing.Status == model.StatusSafeToEject {
+				return ing
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for ingest %d to finish (last seen: %+v)", id, last)
+	return nil
+}
+
 // TestFullPipeline_DetectAssignCopyVerifySafeToEject exercises the entire
 // happy path end to end: detection, camera assignment, copy, verify,
 // SAFE_TO_EJECT, and eject - using the real detector/copy/verify/db code.
@@ -239,6 +259,67 @@ func TestPipeline_CorruptedDestination_EndsInErrorNeverSafeToEject(t *testing.T)
 	}
 	if final.Status == model.StatusSafeToEject {
 		t.Fatal("must never reach SAFE_TO_EJECT after a detected corruption")
+	}
+}
+
+// TestPipeline_SourceRemovedDuringCopy_EndsInError covers runbook section
+// 18.2: a card pulled out mid-copy must end in ERROR, never SAFE_TO_EJECT.
+// Same timing approach as the cancel test: the large fixture makes the copy
+// slow enough that removing the source right after AssignCamera lands
+// mid-copy (and if it ever landed later, verify still has no source to
+// match against, so the expected outcome is the same).
+func TestPipeline_SourceRemovedDuringCopy_EndsInError(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	cardDir := writeLargeMockCard(t, mockRoot, "CARD_PULLED_OUT", 400)
+
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_PULLED_OUT")
+
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("AssignCamera: %v", err)
+	}
+	if err := os.RemoveAll(cardDir); err != nil {
+		t.Fatal(err)
+	}
+
+	final := waitForTerminal(t, mgr, id, 5*time.Second)
+	if final.Status != model.StatusError {
+		t.Fatalf("expected ERROR after the source vanished, got %s", final.Status)
+	}
+	if final.VerifyStatus == model.VerifyOK {
+		t.Fatal("a job whose source vanished must never be marked verified")
+	}
+}
+
+// TestPipeline_SourceEmptiedAfterDetection_EndsInError guards against a
+// card that disappears but leaves an empty directory behind (e.g. an empty
+// mount point after an unplug/umount in real mode): copying and verifying
+// an empty tree trivially "matches", so without a check against what was
+// detected the job would reach SAFE_TO_EJECT with nothing copied.
+func TestPipeline_SourceEmptiedAfterDetection_EndsInError(t *testing.T) {
+	mgr, _, mockRoot := newTestManager(t)
+	cardDir := writeMockCard(t, mockRoot, "CARD_EMPTIED")
+
+	mgr.scanOnce(context.Background())
+	id := findByIdentifier(t, mgr, "CARD_EMPTIED")
+
+	entries, err := os.ReadDir(cardDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(cardDir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := mgr.AssignCamera(id, "CAM01"); err != nil {
+		t.Fatalf("AssignCamera: %v", err)
+	}
+
+	final := waitForTerminal(t, mgr, id, 3*time.Second)
+	if final.Status != model.StatusError {
+		t.Fatalf("expected ERROR when the source no longer has the detected files, got %s", final.Status)
 	}
 }
 

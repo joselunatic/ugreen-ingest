@@ -90,6 +90,30 @@ func TestCopy_RespectsCancellation(t *testing.T) {
 	}
 }
 
+// TestCopy_SourceRemovedMidCopy simulates a card pulled out of the reader
+// mid-copy (runbook section 18.2): the source vanishes after a few files and
+// Copy must return an error rather than a short, "successful" result.
+func TestCopy_SourceRemovedMidCopy(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	for i := 0; i < 20; i++ {
+		writeFile(t, filepath.Join(src, fmt.Sprintf("file_%02d.bin", i)), strings.Repeat("x", 4096))
+	}
+
+	filesSeen := 0
+	_, err := Copy(context.Background(), src, dst, func(p Progress) {
+		filesSeen++
+		if filesSeen == 3 {
+			if err := os.RemoveAll(src); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if err == nil {
+		t.Fatal("expected an error when the source disappears mid-copy")
+	}
+}
+
 func mustHashTree(t *testing.T, root string) string {
 	t.Helper()
 	var out string

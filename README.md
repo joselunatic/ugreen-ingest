@@ -144,6 +144,11 @@ Covers, per the runbook's acceptance criteria (section 18.1):
   `CANCELLED` keeps the same camera/card number and redrives successfully;
   `ResumeInterrupted` redrives a job left `COPYING`/`VERIFYING` by a
   simulated ungraceful restart
+- a card removed mid-copy, or one that vanishes leaving an empty directory
+  (e.g. an empty mount point), always ends in `ERROR`, never
+  `SAFE_TO_EJECT` (`TestPipeline_SourceRemovedDuringCopy_EndsInError`,
+  `TestPipeline_SourceEmptiedAfterDetection_EndsInError`,
+  `TestCopy_SourceRemovedMidCopy`)
 
 ## State machine
 

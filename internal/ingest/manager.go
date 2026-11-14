@@ -346,6 +346,14 @@ func (m *Manager) runCopyAndVerify(ctx context.Context, ing *model.Ingest) {
 		m.fail(ing.ID, fmt.Sprintf("copy failed: %v", err), model.VerifyPending)
 		return
 	}
+	// Verify only compares what is on the source *now*, so a card that
+	// vanished leaving an empty mount point would trivially "verify". Fewer
+	// files than at detection means the card is gone or not readable.
+	// (More is fine: detection can undercount a card still being written.)
+	if result.FileCount < ing.FileCount {
+		m.fail(ing.ID, fmt.Sprintf("copy incomplete: copied %d of %d files detected on the card (was it removed?)", result.FileCount, ing.FileCount), model.VerifyPending)
+		return
+	}
 
 	if err := m.db.MarkCopyCompleted(ing.ID, time.Now(), result.BytesTotal); err != nil {
 		log.Printf("ingest: mark copy completed for %d: %v", ing.ID, err)
